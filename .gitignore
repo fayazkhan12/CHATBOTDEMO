@@ -1,0 +1,18 @@
+﻿# python
+**/__pycache__/
+**/.pytest_cache/
+backend/venv/
+backend/.venv/
+backend/.env
+backend/body.json
+backend/s.json
+backend/result.json
+backend/req_local.txt
+# frontend
+frontend/node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.local
+# misc
+*.zip
+*.log
