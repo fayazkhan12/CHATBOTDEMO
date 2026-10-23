@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { http, loadRazorpay } from "../lib/api";
+import { useVoiceDock, useFormGuide, CHECKOUT_VOICE_FIELDS, highlightPay } from "../lib/useVoiceDock";
 import { useAuth } from "../lib/auth";
 import { ShieldCheck } from "lucide-react";
 
@@ -73,6 +74,17 @@ export default function Checkout() {
       setPaying(false);
     }
   };
+
+  const voiceGuide = useFormGuide({
+    fields: CHECKOUT_VOICE_FIELDS,
+    onValue: (key, value) => setForm((f) => ({ ...f, [key]: value })),
+    onDone: highlightPay,
+  });
+  useVoiceDock({
+    maxTurns: 30,
+    onStart: () => voiceGuide.start(),
+    onText: (said) => voiceGuide.handle(said),
+  });
 
   if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading…</div>;
   if (!booking) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Booking not found.</div>;

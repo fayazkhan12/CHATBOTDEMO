@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pickDefaultLang, saveLang } from "../lib/voice";
+import { resolvePick } from "../lib/voicecmd";
+import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
 import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight } from "lucide-react";
 import { API, http } from "../lib/api";
@@ -297,10 +299,21 @@ export default function Home() {
   sendRef.current = send;
   sendingRef.current = sending;
   chatActiveRef.current = messages.length > 1;
+  const lastCardsRef = useRef([]);
+  const openCardRef = useRef(null);
+  openCardRef.current = openCard;
+  const lastCardMsg = [...messages].reverse().find((m) => m.cards && m.cards.length);
+  lastCardsRef.current = lastCardMsg ? lastCardMsg.cards.slice(0, lastCardMsg.visible || 3) : [];
 
   const onVoiceFinal = useCallback((said) => {
     if (!shouldSendUtterance(said, chatActiveRef.current)) {
       setVoiceNote("I did not catch that. Tap the mic and try again.");
+      return;
+    }
+    const pick = resolvePick(said, lastCardsRef.current);
+    if (pick) {
+      markVoiceFlow();
+      openCardRef.current(pick);
       return;
     }
     if (sendingRef.current) {

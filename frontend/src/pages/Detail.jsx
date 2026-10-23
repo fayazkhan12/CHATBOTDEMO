@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useVoiceDock, markVoiceFlow } from "../lib/useVoiceDock";
+import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
 import { ArrowLeft, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
@@ -43,6 +45,16 @@ export default function Detail() {
   };
 
   if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading details…</div>;
+  useVoiceDock({
+    maxTurns: 5,
+    onStart: () => ({ say: 'Say "reserve now" to book this one, or "back" to see other options.', listen: true }),
+    onText: (said) => {
+      if (isBackIntent(said)) { navigate(-1); return { listen: false }; }
+      if (isReserveIntent(said)) { markVoiceFlow(); book(); return { say: "Reserving this for you.", listen: false }; }
+      return { say: 'Sorry. Say "reserve now" or "back".', listen: true };
+    },
+  });
+
   if (!item) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Option not found. <button className="btn-primary" onClick={() => navigate(-1)} style={{marginTop:14}}>Go back</button></div>;
 
   const amenities = item.amenities || ["Breakfast included", "Free cancellation", "24×7 concierge", "Wi-Fi"];
