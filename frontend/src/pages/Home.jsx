@@ -454,9 +454,6 @@ export default function Home() {
       )}
       {voiceNote && <div className="voice-note" role="status">{voiceNote}</div>}
 
-      <div className="agent-hint">
-        <button className="link-btn" onClick={() => navigate("/search")}>Advanced search</button>
-      </div>
     </div>
   );
 }
