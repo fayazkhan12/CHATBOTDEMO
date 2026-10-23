@@ -49,6 +49,35 @@ function extractSearchIntent(text) {
   }
 }
 
+// Labels under the result cards, in the language the user wrote in
+const LABELS = {
+  en: {
+    more: (n) => `Show more (${n} more)`,
+    next: "Show next options",
+    found: (a, b) => `${a} options found, showing ${b}`,
+    loading: "Loading...",
+  },
+  hinglish: {
+    more: (n) => `Aur dikhao (${n} aur)`,
+    next: "Agle options dikhao",
+    found: (a, b) => `${a} options mile, ${b} dikha rahe hain`,
+    loading: "Loading...",
+  },
+  hi: {
+    more: (n) => `\u0914\u0930 \u0926\u093f\u0916\u093e\u0913 (${n} \u0914\u0930)`,
+    next: "\u0905\u0917\u0932\u0947 \u0935\u093f\u0915\u0932\u094d\u092a \u0926\u093f\u0916\u093e\u0913",
+    found: (a, b) => `${a} \u0935\u093f\u0915\u0932\u094d\u092a \u092e\u093f\u0932\u0947, ${b} \u0926\u093f\u0916\u093e \u0930\u0939\u0947 \u0939\u0948\u0902`,
+    loading: "\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...",
+  },
+};
+
+function detectUiLang(text) {
+  const t = text || "";
+  if (/[\u0900-\u097F]/.test(t)) return "hi";
+  if (/\b(hai|hain|chahiye|chahie|dikhao|dikha|mujhe|kya|nahi|karo|batao|mein|wala|wale|liye|kaise|kitna|aur|bhi)\b/i.test(t)) return "hinglish";
+  return "en";
+}
+
 const QUICK_STARTERS = [
   { label: "Jaipur hotel chahiye", icon: Hotel },
   { label: "Delhi to Goa flight", icon: Plane },
@@ -56,7 +85,7 @@ const QUICK_STARTERS = [
   { label: "Airport cab Bangalore", icon: Car },
 ];
 
-const MessageBubble = ({ msg, onOpenCard }) => (
+const MessageBubble = ({ msg, onOpenCard, onMore }) => (
   <div className={`chat-row ${msg.role}`} data-testid={`chat-row-${msg.role}`}>
     <div className="chat-avatar-lg">
       {msg.role === "assistant" ? <Sparkles size={16} /> : <span>You</span>}
@@ -67,7 +96,7 @@ const MessageBubble = ({ msg, onOpenCard }) => (
       </div>
       {msg.cards?.length > 0 && (
         <div className="inline-cards">
-          {msg.cards.map(card => (
+          {msg.cards.slice(0, msg.visible || 3).map(card => (
             <article key={card.id} className="inline-card" onClick={() => onOpenCard(card)} data-testid={`inline-card-${card.id}`}>
               <img src={card.image} alt={card.title}/>
               <div className="inline-body">
@@ -81,6 +110,24 @@ const MessageBubble = ({ msg, onOpenCard }) => (
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {msg.cards?.length > 0 && (
+        <div className="cards-more" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+          {msg.total > 0 && (
+            <small style={{ color: "var(--muted)" }}>
+              {(LABELS[msg.lang] || LABELS.en).found(msg.total, Math.min(msg.visible || 3, msg.cards.length))}
+            </small>
+          )}
+          {(msg.cards.length > (msg.visible || 3) || msg.hasMore) && (
+            <button className="inline-cta" disabled={!!msg.loadingMore} onClick={() => onMore(msg)} data-testid="show-more">
+              {msg.loadingMore
+                ? (LABELS[msg.lang] || LABELS.en).loading
+                : msg.cards.length > (msg.visible || 3)
+                  ? (LABELS[msg.lang] || LABELS.en).more(msg.cards.length - (msg.visible || 3))
+                  : (LABELS[msg.lang] || LABELS.en).next}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -122,7 +169,7 @@ export default function Home() {
 
   const runSearch = async (intent, replyId) => {
     try {
-      const { data } = await http.post("/travel/search", {
+      const body = {
         service: intent.service,
         origin: intent.origin || "Delhi",
         destination: intent.destination,
@@ -132,12 +179,40 @@ export default function Home() {
         travellers: Number(intent.travellers || 2),
         ...(intent.budget_tier ? { budget_tier: intent.budget_tier } : {}),
         ...(intent.budget ? { budget: Number(intent.budget) } : {}),
-      });
+      };
+      const { data } = await http.post("/travel/search", body);
       await http.post("/travel/cache", data.results).catch(() => {});
-      const top3 = data.results.slice(0, 3);
-      setMessages((prev) => prev.map((m) => m.id === replyId ? { ...m, cards: top3 } : m));
+      setMessages((prev) => prev.map((m) => m.id === replyId ? {
+        ...m, cards: data.results, visible: 3, total: data.total || 0,
+        page: data.page || 1, hasMore: !!data.has_more, searchBody: body,
+        lang: detectUiLang([...historyRef.current].reverse().find((h) => h.role === "user")?.text),
+      } : m));
     } catch (e) {
       setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "assistant", text: "Search abhi fail ho gaya. Thodi der me try karein." }]);
+    }
+  };
+
+  const loadMore = async (msg) => {
+    if (msg.loadingMore) return;
+    const hidden = (msg.cards?.length || 0) - (msg.visible || 3);
+    if (hidden > 0) {
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, visible: (m.visible || 3) + 6 } : m));
+      return;
+    }
+    if (!msg.hasMore || !msg.searchBody) return;
+    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, loadingMore: true } : m));
+    try {
+      const { data } = await http.post("/travel/search", { ...msg.searchBody, page: (msg.page || 1) + 1 });
+      await http.post("/travel/cache", data.results).catch(() => {});
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== msg.id) return m;
+        const seen = new Set(m.cards.map((c) => c.id));
+        const fresh = data.results.filter((c) => !seen.has(c.id));
+        const all = [...m.cards, ...fresh];
+        return { ...m, cards: all, visible: all.length, page: data.page || (m.page || 1) + 1, hasMore: !!data.has_more && fresh.length > 0, loadingMore: false };
+      }));
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, loadingMore: false } : m));
     }
   };
 
@@ -266,7 +341,7 @@ export default function Home() {
 
       <div className="agent-messages" data-testid="agent-messages">
         {messages.map((m) => (
-          <MessageBubble key={m.id} msg={m} onOpenCard={openCard}/>
+          <MessageBubble key={m.id} msg={m} onOpenCard={openCard} onMore={loadMore}/>
         ))}
         <div ref={endRef}/>
       </div>
