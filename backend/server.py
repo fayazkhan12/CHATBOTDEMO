@@ -1079,6 +1079,8 @@ async def verify_booking(body: VerifyIn):
         raise HTTPException(status_code=503, detail="Payments not configured")
     message = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode()
     expected = hmac.new(RAZORPAY_KEY_SECRET.encode(), message, hashlib.sha256).hexdigest()
+    if booking.get("razorpay_order_id") != body.razorpay_order_id:
+        raise HTTPException(status_code=400, detail="Order mismatch")
     if not hmac.compare_digest(expected, body.razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid payment signature")
     await db.bookings.update_one(

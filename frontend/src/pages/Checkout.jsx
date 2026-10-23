@@ -32,11 +32,12 @@ export default function Checkout() {
         item: booking.item, traveller: form,
         amount_rupees: booking.amount_rupees, service: booking.service,
       });
+      const bid = order.booking_id || bookingId;
       if (!order.razorpay_order_id) {
         // Razorpay not configured — demo path
-        await http.post("/bookings/demo-confirm", { booking_id: bookingId });
+        await http.post("/bookings/demo-confirm", { booking_id: bid });
         toast.success("Booking confirmed in DEMO mode.");
-        navigate(`/booking/${bookingId}`);
+        navigate(`/booking/${bid}`);
         return;
       }
       const loaded = await loadRazorpay();
@@ -46,20 +47,20 @@ export default function Checkout() {
         amount: order.amount_rupees * 100,
         currency: "INR",
         name: "DestinoWay",
-        description: `Booking ${bookingId}`,
+        description: `Booking ${bid}`,
         order_id: order.razorpay_order_id,
         prefill: { name: form.name, email: form.email, contact: form.phone },
         theme: { color: "#2DD4BF" },
         handler: async (response) => {
           try {
             await http.post("/bookings/verify", {
-              booking_id: bookingId,
+              booking_id: bid,
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
             });
             toast.success("Payment confirmed!");
-            navigate(`/booking/${bookingId}`);
+            navigate(`/booking/${bid}`);
           } catch {
             toast.error("Payment verification failed. Contact support.");
           }
