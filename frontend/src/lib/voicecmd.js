@@ -115,7 +115,7 @@ export function isSkip(normalized) {
 
 const RESERVE = new Set([
   "reserve", "book", "booking", "confirm", "yes", "yeah", "yep", "haan", "han",
-  "ok", "okay", "sure", "proceed", "continue", "kar", "karo", "kardo", "bukk",
+  "ok", "okay", "sure", "proceed", "continue", "kar", "karo", "kardo", "bukk", "\u0915\u0928\u094d\u092b\u0930\u094d\u092e",
   "\u092c\u0941\u0915", "\u0930\u093f\u091c\u093c\u0930\u094d\u0935", "\u0930\u093f\u091c\u0930\u094d\u0935",
   "\u0939\u093e\u0901", "\u0939\u093e\u0902", "\u0920\u0940\u0915",
   "\u0a2c\u0a41\u0a71\u0a15", "\u0a30\u0a3f\u0a1c\u0a3c\u0a30\u0a35", "\u0a39\u0a3e\u0a02",
@@ -123,7 +123,7 @@ const RESERVE = new Set([
 
 const BACK = new Set([
   "back", "wapas", "vapas", "peeche", "previous", "cancel", "no", "nahi", "nahin",
-  "other", "others", "hatao", "dont", "stop",
+  "other", "others", "hatao", "dont", "stop", "\u092c\u0948\u0915",
   "\u0935\u093e\u092a\u0938", "\u0928\u0939\u0940\u0902", "\u092a\u0940\u091b\u0947",
   "\u0a35\u0a3e\u0a2a\u0a38", "\u0a28\u0a39\u0a40\u0a02", "\u0a2a\u0a3f\u0a71\u0a1b\u0a47",
 ]);
@@ -141,40 +141,40 @@ export function isReserveIntent(text) {
 // ---- picking a result card by number or by name ----
 
 const STRONG_ORD = [
-  ["first", "1st", "pehla", "pehli", "pehle", "pahla", "pahli", "pahle",
+  ["first", "1st", "\u092b\u0930\u094d\u0938\u094d\u091f", "\u092b\u093c\u0930\u094d\u0938\u094d\u091f", "\u092b\u0938\u094d\u091f", "pehla", "pehli", "pehle", "pahla", "pahli", "pahle",
     "\u092a\u0939\u0932\u093e", "\u092a\u0939\u0932\u0940", "\u092a\u0939\u0932\u0947",
     "\u0a2a\u0a39\u0a3f\u0a32\u0a3e", "\u0a2a\u0a39\u0a3f\u0a32\u0a40"],
-  ["second", "2nd", "dusra", "dusri", "dusre", "doosra", "doosri", "doosre",
+  ["second", "2nd", "\u0938\u0947\u0915\u0902\u0921", "\u0938\u0947\u0915\u0947\u0902\u0921", "dusra", "dusri", "dusre", "doosra", "doosri", "doosre",
     "\u0926\u0942\u0938\u0930\u093e", "\u0926\u0942\u0938\u0930\u0940", "\u0926\u0942\u0938\u0930\u0947",
     "\u0a26\u0a42\u0a1c\u0a3e", "\u0a26\u0a42\u0a1c\u0a40"],
-  ["third", "3rd", "teesra", "teesri", "tisra", "tisri",
+  ["third", "3rd", "\u0925\u0930\u094d\u0921", "teesra", "teesri", "tisra", "tisri",
     "\u0924\u0940\u0938\u0930\u093e", "\u0924\u0940\u0938\u0930\u0940",
     "\u0a24\u0a40\u0a1c\u0a3e", "\u0a24\u0a40\u0a1c\u0a40"],
-  ["fourth", "4th", "chautha", "chauthi",
+  ["fourth", "4th", "\u092b\u094b\u0930\u094d\u0925", "chautha", "chauthi",
     "\u091a\u094c\u0925\u093e", "\u091a\u094c\u0925\u0940", "\u0a1a\u0a4c\u0a25\u0a3e"],
-  ["fifth", "5th", "paanchva", "panchva", "paanchwa",
+  ["fifth", "5th", "\u092b\u093f\u092b\u094d\u0925", "paanchva", "panchva", "paanchwa",
     "\u092a\u093e\u0902\u091a\u0935\u093e\u0902", "\u092a\u093e\u0901\u091a\u0935\u093e\u0902", "\u0a2a\u0a70\u0a1c\u0a35\u0a3e\u0a02"],
   ["sixth", "6th", "chhatha", "\u091b\u0920\u093e"],
 ];
 
 const WEAK_ORD = [
-  ["one", "ek", "1", "\u090f\u0915", "\u0a07\u0a71\u0a15", "\u0a07\u0a15"],
-  ["two", "do", "2", "\u0926\u094b", "\u0a26\u0a4b"],
-  ["three", "teen", "3", "\u0924\u0940\u0928", "\u0a24\u0a3f\u0a70\u0a28"],
-  ["four", "char", "chaar", "4", "\u091a\u093e\u0930", "\u0a1a\u0a3e\u0a30"],
-  ["five", "paanch", "panch", "5", "\u092a\u093e\u0902\u091a", "\u092a\u093e\u0901\u091a", "\u0a2a\u0a70\u0a1c"],
-  ["six", "chhe", "6", "\u091b\u0939", "\u0a1b\u0a47"],
+  ["one", "ek", "\u0935\u0928", "1", "\u090f\u0915", "\u0a07\u0a71\u0a15", "\u0a07\u0a15"],
+  ["two", "do", "\u091f\u0942", "2", "\u0926\u094b", "\u0a26\u0a4b"],
+  ["three", "teen", "\u0925\u094d\u0930\u0940", "3", "\u0924\u0940\u0928", "\u0a24\u0a3f\u0a70\u0a28"],
+  ["four", "char", "chaar", "\u092b\u094b\u0930", "4", "\u091a\u093e\u0930", "\u0a1a\u0a3e\u0a30"],
+  ["five", "paanch", "panch", "\u092b\u093e\u0907\u0935", "5", "\u092a\u093e\u0902\u091a", "\u092a\u093e\u0901\u091a", "\u0a2a\u0a70\u0a1c"],
+  ["six", "chhe", "\u0938\u093f\u0915\u094d\u0938", "6", "\u091b\u0939", "\u0a1b\u0a47"],
 ];
 
 const NUMBER_WORDS = new Set([
   "number", "no", "nambar", "option", "hotel", "wala", "wali", "result",
-  "\u0928\u0902\u092c\u0930", "\u0928\u0902\u092c\u0930", "\u0a28\u0a70\u0a2c\u0a30",
+  "\u0928\u0902\u092c\u0930", "\u0928\u092e\u094d\u092c\u0930", "\u0a28\u0a70\u0a2c\u0a30",
 ]);
 
 const NEXT_OK = new Set(["wala", "wali", "number", "nambar", "option", "\u0935\u093e\u0932\u093e", "\u0a35\u0a3e\u0a32\u0a3e"]);
 
-const LAST = new Set(["last", "akhri", "akhiri", "antim", "\u0906\u0916\u093f\u0930\u0940", "\u0a06\u0a16\u0a30\u0a40"]);
-const CHEAP = new Set(["cheapest", "cheap", "sasta", "sasti", "\u0938\u0938\u094d\u0924\u093e", "\u0a38\u0a38\u0a24\u0a3e"]);
+const LAST = new Set(["last", "\u0932\u093e\u0938\u094d\u091f", "akhri", "akhiri", "antim", "\u0906\u0916\u093f\u0930\u0940", "\u0a06\u0a16\u0a30\u0a40"]);
+const CHEAP = new Set(["cheapest", "\u091a\u0940\u092a\u0947\u0938\u094d\u091f", "cheap", "sasta", "sasti", "\u0938\u0938\u094d\u0924\u093e", "\u0a38\u0a38\u0a24\u0a3e"]);
 const COSTLY = new Set(["costliest", "expensive", "mehnga", "mahnga", "mehenga", "\u092e\u0939\u0902\u0917\u093e", "\u0a2e\u0a39\u0a3f\u0a70\u0a17\u0a3e"]);
 
 const STOP_TITLE = new Set(["hotel", "hotels", "the", "resort", "resorts", "inn", "by", "and", "of", "in", "a", "an", "at", "suites", "suite", "stay", "stays"]);
@@ -233,4 +233,16 @@ export function resolvePick(text, cards) {
     else if (score === bestScore) tie = true;
   });
   return best >= 0 && !tie ? cards[best] : null;
+}
+
+// "select the first one", "open number 2": the person is trying to pick a card.
+const PICK_VERBS = new Set([
+  "select", "selected", "choose", "chuno", "chunna", "chun", "open", "kholo", "khol",
+  "\u0938\u0947\u0932\u0947\u0915\u094d\u091f", "\u091a\u0941\u0928\u094b", "\u0916\u094b\u0932\u094b",
+]);
+
+export function hasPickIntent(text) {
+  const words = normalizeWords(text).split(" ").filter(Boolean);
+  if (!words.length || words.length > 6) return false;
+  return words.some((w) => PICK_VERBS.has(w) || NEXT_OK.has(w));
 }

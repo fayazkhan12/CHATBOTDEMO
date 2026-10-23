@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pickDefaultLang, saveLang } from "../lib/voice";
-import { resolvePick } from "../lib/voicecmd";
+import { resolvePick, hasPickIntent } from "../lib/voicecmd";
+import { guardReply } from "../lib/guard";
 import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
 import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight } from "lucide-react";
@@ -259,7 +260,7 @@ export default function Home() {
             const ev = JSON.parse(line.slice(6));
             if (ev.text) {
               answer += ev.text;
-              const { clean } = extractSearchIntent(answer);
+              const clean = guardReply(extractSearchIntent(answer).clean);
               setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: clean } : m));
             }
           } catch { /* ignore */ }
@@ -272,7 +273,8 @@ export default function Home() {
       setSending(false);
     }
 
-    const { clean, intent } = extractSearchIntent(answer);
+    const { clean: rawClean, intent } = extractSearchIntent(answer);
+    const clean = guardReply(rawClean);
     setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: clean } : m));
 
     if (intent?.service && intent?.destination) {
@@ -314,6 +316,10 @@ export default function Home() {
     if (pick) {
       markVoiceFlow();
       openCardRef.current(pick);
+      return;
+    }
+    if (lastCardsRef.current.length && hasPickIntent(said)) {
+      setVoiceNote("I could not tell which one. Say first, second, third, or the hotel name.");
       return;
     }
     if (sendingRef.current) {
