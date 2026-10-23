@@ -417,3 +417,5 @@ a { color: inherit; text-decoration: none; }
   .hero-stats { flex-wrap: wrap; gap: 20px; }
   .concierge-panel { width: calc(100vw - 20px); right: 10px; bottom: 10px; height: calc(100vh - 20px); }
 }
+
+.brand-logo { width: 38px; height: 38px; object-fit: contain; flex-shrink: 0; }

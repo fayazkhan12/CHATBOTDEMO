@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Sparkles, User2, LogOut } from "lucide-react";
+import { User2, LogOut } from "lucide-react";
 import { useAuth } from "../lib/auth";
 
 export default function Navbar() {
@@ -9,7 +9,7 @@ export default function Navbar() {
   return (
     <header className="topbar" data-testid="navbar">
       <Link to="/" className="brand" data-testid="navbar-logo">
-        <span className="brand-mark"><Sparkles size={18} /></span>
+        <img src="/logo-mark.png" alt="DestinoWay" className="brand-logo" />
         <span>Destino<span className="brand-accent">Way</span></span>
       </Link>
       <nav className="nav-links">
