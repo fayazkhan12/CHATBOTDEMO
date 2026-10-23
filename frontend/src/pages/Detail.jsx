@@ -44,7 +44,6 @@ export default function Detail() {
     }
   };
 
-  if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading details…</div>;
   useVoiceDock({
     maxTurns: 5,
     onStart: () => ({ say: 'Say "reserve now" to book this one, or "back" to see other options.', listen: true }),
@@ -54,6 +53,8 @@ export default function Detail() {
       return { say: 'Sorry. Say "reserve now" or "back".', listen: true };
     },
   });
+
+  if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading details…</div>;
 
   if (!item) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Option not found. <button className="btn-primary" onClick={() => navigate(-1)} style={{marginTop:14}}>Go back</button></div>;
 

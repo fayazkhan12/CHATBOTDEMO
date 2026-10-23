@@ -909,6 +909,9 @@ async def travel_search(req: SearchRequest, request: Request):
             if req.budget is not None
             else "Live hotels are not available right now. Please try again shortly."
         )
+    for r in results:
+        if isinstance(r.get("id"), str) and isinstance(r.get("price"), (int, float)) and r["price"] > 0:
+            r["price_token"] = _price_token(r["id"], round(r["price"]))
     return {
         "status": "success", "mode": mode, "service": req.service,
         "results": results, "note": note, "area": req.area if req.service == "hotels" else None,
@@ -916,6 +919,35 @@ async def travel_search(req: SearchRequest, request: Request):
         "has_more": bool(total and page and page * PAGE_SIZE < total),
         "searched_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+_PRICE_TTL = 3 * 3600
+
+
+def _price_token(item_id: str, price: int) -> str:
+    """Signed proof of the price WE showed for this item. The browser cannot change it."""
+    import base64
+    import json as _json
+    payload = _json.dumps([item_id, int(price), int(time.time()) + _PRICE_TTL], separators=(",", ":")).encode()
+    sig = hmac.new(JWT_SECRET.encode(), payload, hashlib.sha256).hexdigest()[:40]
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=") + "." + sig
+
+
+def _price_from_token(token: Any, item_id: str) -> Optional[int]:
+    import base64
+    import json as _json
+    try:
+        body, sig = str(token).split(".", 1)
+        payload = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+        good = hmac.new(JWT_SECRET.encode(), payload, hashlib.sha256).hexdigest()[:40]
+        if not hmac.compare_digest(good, sig):
+            return None
+        tid, price, exp = _json.loads(payload)
+        if tid != item_id or exp < time.time() or not (0 < price <= 10_000_000):
+            return None
+        return int(price)
+    except Exception:
+        return None
 
 
 _MEM_ITEMS: Dict[str, Any] = {}   # id -> (expiry, item); fallback when MongoDB is unavailable
@@ -941,7 +973,7 @@ async def travel_detail(item_id: str):
 _ITEM_KEYS = [
     "id", "type", "provider", "mode", "title", "brand", "origin", "destination", "rating", "location",
     "price", "currency", "image", "amenities", "meta", "departure", "arrival", "duration", "stops",
-    "cabin", "baggage", "nights",
+    "cabin", "baggage", "nights", "price_token",
 ]
 
 
@@ -1036,12 +1068,19 @@ async def my_trips(user=Depends(current_user)):
 # ---------- bookings + payments ----------
 @api.post("/bookings")
 async def create_booking(body: BookingIn, user=Depends(optional_user)):
+    item_id = str((body.item or {}).get("id") or "")[:100]
+    amount = _price_from_token((body.item or {}).get("price_token"), item_id) if item_id else None
+    if amount is None:
+        raise HTTPException(status_code=409, detail="This price has expired. Please search again.")
+    safe_item = _safe_item(body.item) or {"id": item_id}
+    safe_item["price"] = amount
+    traveller = {str(k)[:40]: str(v)[:200] for k, v in list((body.traveller or {}).items())[:12]}
     booking_id = f"DW{uuid.uuid4().hex[:10].upper()}"
     doc = {
         "booking_id": booking_id,
         "user_id": user["user_id"] if user else None,
-        "service": body.service, "item": body.item, "traveller": body.traveller,
-        "amount_rupees": body.amount_rupees, "currency": "INR",
+        "service": body.service, "item": safe_item, "traveller": traveller,
+        "amount_rupees": amount, "currency": "INR",
         "status": "pending_payment",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1049,7 +1088,7 @@ async def create_booking(body: BookingIn, user=Depends(optional_user)):
     if razorpay_client:
         try:
             order = razorpay_client.order.create({
-                "amount": body.amount_rupees * 100,
+                "amount": amount * 100,
                 "currency": "INR",
                 "receipt": booking_id,
                 "notes": {"booking_id": booking_id, "service": body.service},
@@ -1063,7 +1102,7 @@ async def create_booking(body: BookingIn, user=Depends(optional_user)):
     doc.pop("_id", None)
     return {
         "booking_id": booking_id,
-        "amount_rupees": body.amount_rupees,
+        "amount_rupees": amount,
         "razorpay_order_id": razorpay_order["id"] if razorpay_order else None,
         "razorpay_key_id": RAZORPAY_KEY_ID if razorpay_order else None,
         "mode": "LIVE" if razorpay_order else "DEMO",
