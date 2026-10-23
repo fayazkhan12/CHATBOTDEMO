@@ -79,7 +79,7 @@ function detectUiLang(text) {
 }
 
 const QUICK_STARTERS = [
-  { label: "Jaipur hotel chahiye", icon: Hotel },
+  { label: "Hotels in Jaipur", icon: Hotel },
   { label: "Delhi to Goa flight", icon: Plane },
   { label: "Mumbai to Pune bus", icon: BusFront },
   { label: "Airport cab Bangalore", icon: Car },
@@ -138,7 +138,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [messages, setMessages] = useState([
-    { id: "greet", role: "assistant", text: "Namaste! Main DestinoWay — aapka travel agent. Flight, hotel, bus ya cab — kya chahiye bataiye? Aap koi bhi language me baat kar sakte ho." },
+    { id: "greet", role: "assistant", text: "Hi! I am DestinoWay, your travel concierge. Hotels, flights, buses or cabs: what do you need? You can talk to me in any language." },
   ]);
   const [text, setText] = useState("");
   const [listening, setListening] = useState(false);
@@ -188,7 +188,7 @@ export default function Home() {
         lang: detectUiLang([...historyRef.current].reverse().find((h) => h.role === "user")?.text),
       } : m));
     } catch (e) {
-      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "assistant", text: "Search abhi fail ho gaya. Thodi der me try karein." }]);
+      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "assistant", text: "Search failed. Please try again in a moment." }]);
     }
   };
 
@@ -264,7 +264,7 @@ export default function Home() {
         }
       }
     } catch {
-      answer = "Concierge se connect nahi ho pa raha. Thodi der me try karein.";
+      answer = "Cannot reach the concierge right now. Please try again shortly.";
       setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: answer } : m));
     } finally {
       setSending(false);

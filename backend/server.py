@@ -727,10 +727,10 @@ def _norm_identifier(channel: str, identifier: str) -> str:
         elif len(digits) == 11 and digits.startswith("0"):
             digits = digits[1:]
         if not re.match(r"^[6-9]\d{9}$", digits):
-            raise HTTPException(status_code=400, detail="Sahi 10 digit mobile number daalein")
+            raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile number")
         return "+91" + digits
     if not re.match(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$", s):
-        raise HTTPException(status_code=400, detail="Sahi email daalein")
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
     return s.lower()
 
 
@@ -750,7 +750,7 @@ async def _deliver_otp(channel: str, identifier: str, code: str) -> None:
     """Plug a real SMS / email provider in here. Until one is configured, only demo mode works."""
     if OTP_DEMO_MODE:
         return
-    raise HTTPException(status_code=503, detail="OTP service abhi set up nahi hai")
+    raise HTTPException(status_code=503, detail="OTP service is not configured yet")
 
 
 @api.get("/health/db")
@@ -777,7 +777,7 @@ async def otp_request(body: OtpRequestIn, request: Request):
             _OTP_INDEX_READY = True
         prev = await db.otp_codes.find_one({"_id": key})
         if prev and prev.get("sent_at") and (now - _aware(prev["sent_at"])).total_seconds() < OTP_RESEND_GAP:
-            raise HTTPException(status_code=429, detail="Thodi der baad dobara try karein")
+            raise HTTPException(status_code=429, detail="Please wait a moment before requesting another OTP")
         await db.otp_codes.replace_one(
             {"_id": key},
             {"_id": key, "hash": _otp_hash(ident, code), "sent_at": now,
@@ -788,7 +788,7 @@ async def otp_request(body: OtpRequestIn, request: Request):
         raise
     except Exception as exc:
         logger.warning("otp store failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Database abhi available nahi hai")
+        raise HTTPException(status_code=503, detail="Database is temporarily unavailable")
     await _deliver_otp(body.channel, ident, code)
     out: Dict[str, Any] = {"ok": True, "expires_in": OTP_TTL}
     if OTP_DEMO_MODE:
@@ -805,13 +805,13 @@ async def otp_verify(body: OtpVerifyIn, request: Request):
     try:
         rec = await db.otp_codes.find_one({"_id": key})
         if not rec or _aware(rec["expires_at"]) < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="OTP expire ho gaya. Naya OTP mangwayein")
+            raise HTTPException(status_code=400, detail="OTP expired. Please request a new one")
         if int(rec.get("tries", 0)) >= OTP_MAX_TRIES:
             await db.otp_codes.delete_one({"_id": key})
-            raise HTTPException(status_code=429, detail="Bahut galat try. Naya OTP mangwayein")
+            raise HTTPException(status_code=429, detail="Too many wrong attempts. Please request a new OTP")
         if not hmac.compare_digest(str(rec.get("hash", "")), _otp_hash(ident, body.code)):
             await db.otp_codes.update_one({"_id": key}, {"$inc": {"tries": 1}})
-            raise HTTPException(status_code=400, detail="OTP galat hai")
+            raise HTTPException(status_code=400, detail="Incorrect OTP")
         await db.otp_codes.delete_one({"_id": key})
         field = "phone" if body.channel == "phone" else "email"
         user = await db.users.find_one({field: ident})
@@ -826,7 +826,7 @@ async def otp_verify(body: OtpVerifyIn, request: Request):
         raise
     except Exception as exc:
         logger.warning("otp verify failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Database abhi available nahi hai")
+        raise HTTPException(status_code=503, detail="Database is temporarily unavailable")
     return {
         "token": _make_jwt(user["user_id"]),
         "user": {"user_id": user["user_id"], "email": user.get("email"), "phone": user.get("phone"),
@@ -907,7 +907,7 @@ async def travel_search(req: SearchRequest, request: Request):
         note = (
             "Is budget me hotels nahi mile, budget badhakar try karein."
             if req.budget is not None
-            else "Live hotels abhi nahi mil pa rahe, thodi der baad try karein."
+            else "Live hotels are not available right now. Please try again shortly."
         )
     return {
         "status": "success", "mode": mode, "service": req.service,
@@ -1403,7 +1403,7 @@ async def chat_stream(req: ChatRequest, request: Request):
     async def generator():
         reply = ""
         if not genai_client:
-            reply = "AI concierge abhi available nahi hai."
+            reply = "The AI concierge is not available right now."
             yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
             return
@@ -1498,7 +1498,7 @@ async def chat_stream(req: ChatRequest, request: Request):
                 logger.exception("reply verification failed")
                 reply, block = _ASK_CITY, None
         else:
-            reply = "Main abhi concierge se connect nahi ho pa raha. Thodi der me try karein."
+            reply = "I cannot reach the concierge right now. Please try again shortly."
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"
