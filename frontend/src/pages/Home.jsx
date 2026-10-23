@@ -299,7 +299,10 @@ export default function Home() {
   chatActiveRef.current = messages.length > 1;
 
   const onVoiceFinal = useCallback((said) => {
-    if (!shouldSendUtterance(said, chatActiveRef.current)) return;
+    if (!shouldSendUtterance(said, chatActiveRef.current)) {
+      setVoiceNote("I did not catch that. Tap the mic and try again.");
+      return;
+    }
     if (sendingRef.current) {
       pendingVoice.current = `${pendingVoice.current} ${said}`.trim();
       return;
@@ -318,10 +321,10 @@ export default function Home() {
   const stopVoice = useCallback((reason) => {
     if (voiceRef.current) voiceRef.current.destroy();
     voiceRef.current = null;
-    pendingVoice.current = "";
+    if (reason !== "done") pendingVoice.current = "";
     setListening(false);
     setInterim("");
-    setVoiceNote(reason ? describeStop(reason) : "");
+    if (reason !== "done") setVoiceNote(reason ? describeStop(reason) : "");
   }, []);
 
   const toggleVoice = () => {
@@ -332,6 +335,8 @@ export default function Home() {
       onInterim: setInterim,
       onFinal: onVoiceFinal,
       onStop: stopVoice,
+      once: true,
+      idleMs: 12000,
     });
     if (!eng) { setVoiceNote(describeStop("unsupported")); return; }
     voiceRef.current = eng;
@@ -420,7 +425,7 @@ export default function Home() {
           onClick={toggleVoice}
           aria-label="Voice input"
           data-testid="voice-mic-btn"
-          title={listening ? "Turn off voice mode" : "Turn on voice mode"}
+          title={listening ? "Stop listening" : "Tap and speak"}
         >
           <Mic size={18}/>
         </button>
@@ -449,7 +454,7 @@ export default function Home() {
 
       {listening && (
         <div className="voice-live" role="status">
-          <span className="voice-dot" /> Voice mode is on. Just speak; I send after a short pause.
+          <span className="voice-dot" /> Listening... speak now. The mic turns off by itself.
         </div>
       )}
       {voiceNote && <div className="voice-note" role="status">{voiceNote}</div>}

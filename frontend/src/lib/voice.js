@@ -47,14 +47,15 @@ const STOP_MESSAGES = {
   denied: "Microphone access is blocked. Allow the microphone in your browser settings, or type your message.",
   "no-device": "No microphone was found on this device.",
   network: "Voice recognition lost its connection. Check your internet and try again.",
-  idle: "Voice mode paused after a few minutes of silence. Tap the mic to start again.",
+  idle: "I did not hear anything, so the mic turned off. Tap it and speak again.",
+  done: "",
   unstable: "Voice input keeps disconnecting on this device. Please type your message, or try Chrome.",
   lang: "This language is not available for voice in this browser. Pick another language.",
   unsupported: "Voice input is not supported in this browser. Please use Chrome or Edge, or type your message.",
 };
 
 export function describeStop(reason) {
-  return STOP_MESSAGES[reason] || "Voice mode stopped.";
+  return Object.prototype.hasOwnProperty.call(STOP_MESSAGES, reason) ? STOP_MESSAGES[reason] : "Voice mode stopped.";
 }
 
 // ---- deciding whether a spoken sentence is worth sending ----
@@ -113,6 +114,7 @@ export function createVoiceEngine({
   silenceMs = 1500,
   idleMs = 120000,
   resumeDelayMs = 600,
+  once = false,
 }) {
   const SR = getSR();
   if (!SR) return null;
@@ -157,6 +159,7 @@ export function createVoiceEngine({
     emitInterim("");
     if (t) {
       try { onFinal && onFinal(t); } catch (e) { /* ignore */ }
+      if (once) finish("done");
     }
   }
 
