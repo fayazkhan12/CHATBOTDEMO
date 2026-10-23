@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pickDefaultLang, saveLang } from "../lib/voice";
 import { useNavigate } from "react-router-dom";
 import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight } from "lucide-react";
 import { API, http } from "../lib/api";
@@ -145,7 +146,6 @@ export default function Home() {
   const [speakingReply, setSpeakingReply] = useState(false);
   const [voiceOutput, setVoiceOutput] = useState(true);
   const [sending, setSending] = useState(false);
-  const recognition = useRef(null);
   const endRef = useRef(null);
   const voiceModeRef = useRef(false); // true for current send if invoked via mic
   const historyRef = useRef([]); // mirrors conversation for backend
@@ -285,25 +285,73 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, sending, user, voiceOutput]);
 
+  // ---- hands-free voice mode ----
+  const [voiceLang, setVoiceLang] = useState(pickDefaultLang);
+  const [interim, setInterim] = useState("");
+  const [voiceNote, setVoiceNote] = useState("");
+  const voiceRef = useRef(null);
+  const sendRef = useRef(null);
+  const sendingRef = useRef(false);
+  const chatActiveRef = useRef(false);
+  const pendingVoice = useRef("");
+  sendRef.current = send;
+  sendingRef.current = sending;
+  chatActiveRef.current = messages.length > 1;
+
+  const onVoiceFinal = useCallback((said) => {
+    if (!shouldSendUtterance(said, chatActiveRef.current)) return;
+    if (sendingRef.current) {
+      pendingVoice.current = `${pendingVoice.current} ${said}`.trim();
+      return;
+    }
+    sendRef.current(said, { fromVoice: true });
+  }, []);
+
+  useEffect(() => {
+    if (!sending && pendingVoice.current) {
+      const queued = pendingVoice.current;
+      pendingVoice.current = "";
+      sendRef.current(queued, { fromVoice: true });
+    }
+  }, [sending]);
+
+  const stopVoice = useCallback((reason) => {
+    if (voiceRef.current) voiceRef.current.destroy();
+    voiceRef.current = null;
+    pendingVoice.current = "";
+    setListening(false);
+    setInterim("");
+    setVoiceNote(reason ? describeStop(reason) : "");
+  }, []);
+
   const toggleVoice = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert("Voice input not supported in this browser."); return; }
-    if (listening) { recognition.current?.stop(); setListening(false); return; }
-    const r = new SR();
-    r.lang = "en-IN"; // auto-detect at system; backend will handle actual language
-    r.interimResults = false;
-    r.maxAlternatives = 1;
-    r.onresult = (e) => {
-      const said = e.results[0][0].transcript;
-      setText(said);
-      send(said, { fromVoice: true });
-    };
-    r.onerror = () => setListening(false);
-    r.onend = () => setListening(false);
-    recognition.current = r;
-    r.start();
+    if (listening) { stopVoice(); return; }
+    setVoiceNote("");
+    const eng = createVoiceEngine({
+      lang: voiceLang,
+      onInterim: setInterim,
+      onFinal: onVoiceFinal,
+      onStop: stopVoice,
+    });
+    if (!eng) { setVoiceNote(describeStop("unsupported")); return; }
+    voiceRef.current = eng;
+    eng.start();
     setListening(true);
   };
+
+  const changeVoiceLang = (code) => {
+    setVoiceLang(code);
+    saveLang(code);
+    if (voiceRef.current) voiceRef.current.setLang(code);
+  };
+
+  // do not listen while the bot is speaking (it would hear itself)
+  useEffect(() => {
+    if (voiceRef.current) voiceRef.current.setPaused(speakingReply);
+  }, [speakingReply]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (voiceRef.current) voiceRef.current.destroy(); }, []);
 
   const stopSpeaking = () => {
     window.speechSynthesis?.cancel();
@@ -372,14 +420,25 @@ export default function Home() {
           onClick={toggleVoice}
           aria-label="Voice input"
           data-testid="voice-mic-btn"
-          title={listening ? "Stop listening" : "Talk — Hindi, English, Bengali and more"}
+          title={listening ? "Turn off voice mode" : "Turn on voice mode"}
         >
           <Mic size={18}/>
         </button>
+        <select
+          className="voice-lang"
+          value={voiceLang}
+          onChange={(e) => changeVoiceLang(e.target.value)}
+          aria-label="Voice language"
+          data-testid="voice-lang"
+        >
+          {VOICE_LANGS.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={listening ? "Listening…" : sending ? "AI typing… ya nayi baat type karein" : "Message DestinoWay — koi bhi language me…"}
+          placeholder={listening ? (interim || "Listening...") : sending ? "Thinking... you can type your next message" : "Message DestinoWay in any language..."}
           autoFocus
           data-testid="agent-input"
         />
@@ -388,8 +447,15 @@ export default function Home() {
         </button>
       </form>
 
+      {listening && (
+        <div className="voice-live" role="status">
+          <span className="voice-dot" /> Voice mode is on. Just speak; I send after a short pause.
+        </div>
+      )}
+      {voiceNote && <div className="voice-note" role="status">{voiceNote}</div>}
+
       <div className="agent-hint">
-        <button className="link-btn" onClick={() => navigate("/search")}>RAVI AI</button>
+        <button className="link-btn" onClick={() => navigate("/search")}>Advanced search</button>
       </div>
     </div>
   );
