@@ -16,7 +16,7 @@ export default function Login() {
   const { loginEmail, signupEmail, requestOtp, verifyOtp } = useAuth();
 
   const [method, setMethod] = useState("otp");       // "otp" | "password"
-  const [channel, setChannel] = useState("email");   // "email" | "phone"
+  const [channel, setChannel] = useState("phone");   // "email" | "phone"
   const [step, setStep] = useState(1);               // 1 = enter email/phone, 2 = enter code
   const [mode, setMode] = useState(params.get("mode") === "signup" ? "signup" : "login");
   const [identifier, setIdentifier] = useState("");
@@ -24,6 +24,7 @@ export default function Login() {
   const [cooldown, setCooldown] = useState(0);
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [busy, setBusy] = useState(false);
+  const [devOtp, setDevOtp] = useState("");
 
   useEffect(() => {
     if (cooldown <= 0) return undefined;
@@ -37,7 +38,8 @@ export default function Login() {
     e?.preventDefault();
     setBusy(true);
     try {
-      await requestOtp(channel, identifier);
+      const res = await requestOtp(channel, identifier);
+      setDevOtp(res?.data?.dev_otp || "");
       setStep(2);
       setCode("");
       setCooldown(60);
@@ -122,6 +124,11 @@ export default function Login() {
             ) : (
               <form className="auth-form" onSubmit={checkOtp}>
                 <small>{identifier} par 6-digit OTP bheja gaya hai</small>
+                {devOtp && (
+                  <div className="demo-otp" data-testid="demo-otp">
+                    Demo mode: aapka OTP <strong>{devOtp}</strong> (asli SMS abhi band hai)
+                  </div>
+                )}
                 <input
                   inputMode="numeric"
                   maxLength={6}

@@ -694,6 +694,146 @@ async def exchange_session(request: Request, response: Response):
     return {"user": {"user_id": user["user_id"], "email": email, "name": name, "picture": picture}}
 
 
+# ---------- OTP login (phone / email) ----------
+import secrets as _secrets
+
+OTP_DEMO_MODE = os.environ.get("OTP_DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
+OTP_TTL = 300          # code valid for 5 minutes
+OTP_MAX_TRIES = 5      # wrong guesses before the code is burned
+OTP_RESEND_GAP = 55    # seconds between two sends to the same number
+_OTP_INDEX_READY = False
+if OTP_DEMO_MODE:
+    logger.warning("OTP_DEMO_MODE is ON: OTP is returned in the API response and NO SMS/email is sent. Never use in production.")
+
+
+class OtpRequestIn(BaseModel):
+    channel: Literal["phone", "email"]
+    identifier: str = Field(min_length=3, max_length=120)
+
+
+class OtpVerifyIn(BaseModel):
+    channel: Literal["phone", "email"]
+    identifier: str = Field(min_length=3, max_length=120)
+    code: str = Field(pattern=r"^\d{6}$")
+    name: Optional[str] = Field(None, max_length=80)
+
+
+def _norm_identifier(channel: str, identifier: str) -> str:
+    s = str(identifier or "").strip()
+    if channel == "phone":
+        digits = re.sub(r"\D", "", s)
+        if len(digits) == 12 and digits.startswith("91"):
+            digits = digits[2:]
+        elif len(digits) == 11 and digits.startswith("0"):
+            digits = digits[1:]
+        if not re.match(r"^[6-9]\d{9}$", digits):
+            raise HTTPException(status_code=400, detail="Sahi 10 digit mobile number daalein")
+        return "+91" + digits
+    if not re.match(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$", s):
+        raise HTTPException(status_code=400, detail="Sahi email daalein")
+    return s.lower()
+
+
+def _otp_hash(identifier: str, code: str) -> str:
+    return hashlib.sha256(f"{JWT_SECRET}|{identifier}|{code}".encode()).hexdigest()
+
+
+def _aware(dt: Any) -> datetime:
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+async def _deliver_otp(channel: str, identifier: str, code: str) -> None:
+    """Plug a real SMS / email provider in here. Until one is configured, only demo mode works."""
+    if OTP_DEMO_MODE:
+        return
+    raise HTTPException(status_code=503, detail="OTP service abhi set up nahi hai")
+
+
+@api.get("/health/db")
+async def health_db():
+    try:
+        await client.admin.command("ping")
+        return {"mongo": True}
+    except Exception as exc:
+        return {"mongo": False, "error": type(exc).__name__}
+
+
+@api.post("/auth/otp/request")
+async def otp_request(body: OtpRequestIn, request: Request):
+    global _OTP_INDEX_READY
+    _rate_limit(f"otpreq-ip:{_client_ip(request)}", 10, 600)
+    ident = _norm_identifier(body.channel, body.identifier)
+    _rate_limit(f"otpreq:{ident}", 5, 600)
+    key = f"{body.channel}:{ident}"
+    now = datetime.now(timezone.utc)
+    code = f"{_secrets.randbelow(1_000_000):06d}"
+    try:
+        if not _OTP_INDEX_READY:
+            await db.otp_codes.create_index("expires_at", expireAfterSeconds=0)
+            _OTP_INDEX_READY = True
+        prev = await db.otp_codes.find_one({"_id": key})
+        if prev and prev.get("sent_at") and (now - _aware(prev["sent_at"])).total_seconds() < OTP_RESEND_GAP:
+            raise HTTPException(status_code=429, detail="Thodi der baad dobara try karein")
+        await db.otp_codes.replace_one(
+            {"_id": key},
+            {"_id": key, "hash": _otp_hash(ident, code), "sent_at": now,
+             "expires_at": now + timedelta(seconds=OTP_TTL), "tries": 0},
+            upsert=True,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("otp store failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database abhi available nahi hai")
+    await _deliver_otp(body.channel, ident, code)
+    out: Dict[str, Any] = {"ok": True, "expires_in": OTP_TTL}
+    if OTP_DEMO_MODE:
+        out["demo"] = True
+        out["dev_otp"] = code
+    return out
+
+
+@api.post("/auth/otp/verify")
+async def otp_verify(body: OtpVerifyIn, request: Request):
+    _rate_limit(f"otpver-ip:{_client_ip(request)}", 30, 600)
+    ident = _norm_identifier(body.channel, body.identifier)
+    key = f"{body.channel}:{ident}"
+    try:
+        rec = await db.otp_codes.find_one({"_id": key})
+        if not rec or _aware(rec["expires_at"]) < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="OTP expire ho gaya. Naya OTP mangwayein")
+        if int(rec.get("tries", 0)) >= OTP_MAX_TRIES:
+            await db.otp_codes.delete_one({"_id": key})
+            raise HTTPException(status_code=429, detail="Bahut galat try. Naya OTP mangwayein")
+        if not hmac.compare_digest(str(rec.get("hash", "")), _otp_hash(ident, body.code)):
+            await db.otp_codes.update_one({"_id": key}, {"$inc": {"tries": 1}})
+            raise HTTPException(status_code=400, detail="OTP galat hai")
+        await db.otp_codes.delete_one({"_id": key})
+        field = "phone" if body.channel == "phone" else "email"
+        user = await db.users.find_one({field: ident})
+        if not user:
+            user = {
+                "user_id": f"user_{uuid.uuid4().hex[:12]}", field: ident,
+                "name": (body.name or "").strip() or "Traveller", "picture": None,
+                "provider": "otp", "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.users.insert_one(dict(user))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("otp verify failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database abhi available nahi hai")
+    return {
+        "token": _make_jwt(user["user_id"]),
+        "user": {"user_id": user["user_id"], "email": user.get("email"), "phone": user.get("phone"),
+                 "name": user.get("name"), "picture": user.get("picture")},
+    }
+
+
 @api.get("/auth/me")
 async def me(user=Depends(current_user)):
     return user
