@@ -5,6 +5,7 @@ import { http, loadRazorpay } from "../lib/api";
 import { useVoiceDock, useFormGuide, CHECKOUT_VOICE_FIELDS, highlightPay } from "../lib/useVoiceDock";
 import { useAuth } from "../lib/auth";
 import { ShieldCheck } from "lucide-react";
+import { validateTraveller } from "../lib/validate";
 
 export default function Checkout() {
   const { bookingId } = useParams();
@@ -14,6 +15,24 @@ export default function Checkout() {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [form, setForm] = useState({ name: user?.name || "", email: user?.email || "", phone: "", address: "", city: "", state: "" });
+  const [errors, setErrors] = useState({});
+  // re-check the fields that are showing an error while the user fixes them
+  useEffect(() => {
+    setErrors((old) => {
+      if (!Object.keys(old).length) return old;
+      const now = validateTraveller(form);
+      const next = {};
+      Object.keys(old).forEach((k) => { if (now[k]) next[k] = now[k]; });
+      return next;
+    });
+  }, [form]);
+  const check = (k) => setErrors((old) => {
+    const msg = validateTraveller(form)[k];
+    const next = { ...old };
+    if (msg) next[k] = msg; else delete next[k];
+    return next;
+  });
+  const bad = (k) => (errors[k] ? <small className="field-error" role="alert">{errors[k]}</small> : null);
 
   useEffect(() => {
     http.get(`/bookings/${bookingId}`).then(({ data }) => {
@@ -25,7 +44,15 @@ export default function Checkout() {
 
   const pay = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.email || !form.phone) { toast.error("Please fill all details"); return; }
+    const found = validateTraveller(form);
+    setErrors(found);
+    const firstBad = Object.keys(found)[0];
+    if (firstBad) {
+      toast.error(found[firstBad]);
+      const el = document.querySelector(`[data-testid="checkout-${firstBad}"]`);
+      if (el && el.focus) el.focus();
+      return;
+    }
     setPaying(true);
     try {
       // Fetch Razorpay order again to get fresh key_id (we already have one on booking)
@@ -91,18 +118,18 @@ export default function Checkout() {
 
   return (
     <div className="checkout-page" data-testid="checkout-page">
-      <form className="checkout-form" onSubmit={pay}>
+      <form className="checkout-form" onSubmit={pay} noValidate>
         <h2>Traveller details</h2>
         <div className="form-row">
-          <label><span>Full name</span><input value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})} required data-testid="checkout-name"/></label>
-          <label><span>Email</span><input type="email" value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})} required data-testid="checkout-email"/></label>
+          <label><span>Full name</span><input value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})} required onBlur={() => check("name")} aria-invalid={!!errors.name} data-testid="checkout-name"/>{bad("name")}</label>
+          <label><span>Email</span><input type="email" value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})} required onBlur={() => check("email")} aria-invalid={!!errors.email} data-testid="checkout-email"/>{bad("email")}</label>
         </div>
         <div className="form-row">
-          <label><span>Mobile (with code)</span><input value={form.phone} onChange={(e)=>setForm({...form,phone:e.target.value})} placeholder="+91 9000090000" required data-testid="checkout-phone"/></label>
-          <label><span>City</span><input value={form.city} onChange={(e)=>setForm({...form,city:e.target.value})} data-testid="checkout-city"/></label>
+          <label><span>Mobile (with code)</span><input value={form.phone} onChange={(e)=>setForm({...form,phone:e.target.value})} placeholder="+91 9000090000" required onBlur={() => check("phone")} aria-invalid={!!errors.phone} data-testid="checkout-phone"/>{bad("phone")}</label>
+          <label><span>City</span><input value={form.city} onChange={(e)=>setForm({...form,city:e.target.value})} onBlur={() => check("city")} aria-invalid={!!errors.city} data-testid="checkout-city"/>{bad("city")}</label>
         </div>
         <div className="form-row single">
-          <label><span>Address</span><input value={form.address} onChange={(e)=>setForm({...form,address:e.target.value})} data-testid="checkout-address"/></label>
+          <label><span>Address</span><input value={form.address} onChange={(e)=>setForm({...form,address:e.target.value})} onBlur={() => check("address")} aria-invalid={!!errors.address} data-testid="checkout-address"/>{bad("address")}</label>
         </div>
         <button type="submit" className="btn-primary" style={{width:'100%',padding:'15px',marginTop:14,fontSize:15}} disabled={paying} data-testid="pay-btn">
           {paying ? "Processing…" : `Pay ₹${Number(booking.amount_rupees).toLocaleString("en-IN")} securely`}
