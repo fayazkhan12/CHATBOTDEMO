@@ -84,13 +84,19 @@ function titleCase(s) {
   return s.split(" ").map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(" ");
 }
 
+const NAME_FILLER = new Set(["my", "name", "is", "full", "the", "i", "am", "im", "this", "naam", "mera", "meraa", "poora", "pura", "hai", "ha", "me", "main", "hoon", "hu", "it", "its", "uh", "um", "ok", "okay"]);
+
 export function parseName(text) {
   let t = String(text || "").replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
-  t = t.replace(/^(my (full )?name is|name is|this is|i am|i'm|mera (poora )?naam|mera name|naam)\s+/i, "");
+  for (let i = 0; i < 3; i += 1) {
+    t = t.replace(/^(my (full )?name is|my name|name is|this is|i am|i'm|im|mera (poora |pura )?naam|mera name|mera|naam|मेरा (पूरा )?नाम|नाम)(\s+|$)/i, "");
+  }
+  t = t.replace(/\s+(hai|hoon|hu|है|हूँ|हूं)$/i, "").trim();
   if (!t || t.length > 60 || /\d/.test(t)) return null;
   if (!/^[\p{L}\p{M}'\- ]+$/u.test(t)) return null;
   const words = t.split(" ").filter(Boolean);
   if (words.length > 5 || t.replace(/[^\p{L}]/gu, "").length < 2) return null;
+  if (words.every((w) => NAME_FILLER.has(w.toLowerCase()))) return null;
   return titleCase(words.join(" "));
 }
 
@@ -264,4 +270,22 @@ export function isBookingsIntent(text) {
 }
 export function isLoginIntent(text) {
   return hasAny(text, ["login", "signin", "sign", "log", "लॉगिन"]);
+}
+
+// Digits spoken one by one ("nine eight seven") or typed; used for OTP and PIN codes.
+export function parseDigits(text, min, max) {
+  const toks = normalizeWords(text).split(" ").filter(Boolean);
+  let digits = "";
+  let mult = 1;
+  for (const w of toks) {
+    if (w === "double" || w === "dabal") { mult = 2; continue; }
+    if (w === "triple" || w === "tripal") { mult = 3; continue; }
+    let d = null;
+    if (/^\d+$/.test(w)) d = w;
+    else if (Object.prototype.hasOwnProperty.call(DIGIT_WORDS, w)) d = String(DIGIT_WORDS[w]);
+    if (d === null) { mult = 1; continue; }
+    digits += d.length === 1 ? d.repeat(mult) : d;
+    mult = 1;
+  }
+  return digits.length >= min && digits.length <= max ? digits : null;
 }

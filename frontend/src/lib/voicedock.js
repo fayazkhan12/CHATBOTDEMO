@@ -131,7 +131,7 @@ function createDock(getConfig) {
       lang: lang || pickDefaultLang(),
       once: true,
       idleMs: 12000,
-      onInterim: (t) => setNote(t ? `\u201c${t}\u201d` : "Listening..."),
+      onInterim: (t) => { if (t) setNote(`\u201c${t}\u201d`); },
       onFinal: (text) => {
         const c = getConfig() || {};
         let turn = null;
@@ -153,7 +153,6 @@ function createDock(getConfig) {
     if (!eng) { active = false; setNote(describeStop("unsupported")); return; }
     engine = eng;
     setListening(true);
-    setNote("Listening...");
     eng.start();
   }
 
@@ -250,13 +249,15 @@ export function createFormGuide(getOpts) {
   let fails = 0;
   const T = (say, listen) => ({ say, listen, lang: "en-IN" });
   const fields = () => getOpts().fields;
+  const DONE = () => getOpts().doneText || "All details are filled. Please check the screen and tap Pay.";
+  const EDIT = () => getOpts().editText || "All details are filled. Say change name, phone or email to edit, or tap Pay.";
 
   function advance(got) {
     const f = fields();
     if (idx >= f.length) {
       const o = getOpts();
       if (o.onDone) o.onDone();
-      return T("All details are filled. Please check the screen and tap Pay.", false);
+      return T(DONE(), false);
     }
     return T(`${got ? "Got it. " : ""}${f[idx].ask}`, true);
   }
@@ -264,7 +265,7 @@ export function createFormGuide(getOpts) {
   return {
     start() {
       const f = fields();
-      if (idx >= f.length) return T("All details are filled. Say change name, phone or email to edit, or tap Pay.", true);
+      if (idx >= f.length) return T(EDIT(), true);
       return T(`${idx === 0 ? "Let us fill your details. " : ""}${f[idx].ask}`, true);
     },
     handle(text) {
@@ -278,7 +279,7 @@ export function createFormGuide(getOpts) {
         if (j >= 0) { idx = j; fails = 0; return T(f[j].ask, true); }
       }
       if (/\b(repeat|again|dobara|once more)\b/.test(t) && idx < f.length) return T(f[idx].ask, true);
-      if (idx >= f.length) return T("All details are filled. Say change name, phone or email to edit, or tap Pay.", false);
+      if (idx >= f.length) return T(EDIT(), false);
       const cur = f[idx];
       if (cur.optional && isSkip(t)) { idx += 1; fails = 0; return advance(false); }
       const v = cur.parse(raw);
