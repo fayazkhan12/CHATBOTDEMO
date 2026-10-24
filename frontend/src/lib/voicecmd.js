@@ -34,6 +34,40 @@ const DIGIT_WORDS = {
   four: 4, for: 4, char: 4, chaar: 4, five: 5, paanch: 5, panch: 5,
   six: 6, chhe: 6, chheh: 6, che: 6, seven: 7, saat: 7, sat: 7,
   eight: 8, aath: 8, ath: 8, nine: 9, nau: 9,
+  "\u0936\u0942\u0928\u094d\u092f": 0,
+  "\u091c\u0940\u0930\u094b": 0,
+  "\u091c\u093c\u0940\u0930\u094b": 0,
+  "\u090f\u0915": 1,
+  "\u0935\u0928": 1,
+  "\u0926\u094b": 2,
+  "\u091f\u0942": 2,
+  "\u0924\u0940\u0928": 3,
+  "\u0925\u094d\u0930\u0940": 3,
+  "\u091a\u093e\u0930": 4,
+  "\u092b\u094b\u0930": 4,
+  "\u092a\u093e\u0902\u091a": 5,
+  "\u092a\u093e\u0901\u091a": 5,
+  "\u092a\u0902\u091a": 5,
+  "\u092b\u093e\u0907\u0935": 5,
+  "\u091b\u0939": 6,
+  "\u091b\u0903": 6,
+  "\u091b\u0947": 6,
+  "\u0938\u093f\u0915\u094d\u0938": 6,
+  "\u0938\u093e\u0924": 7,
+  "\u0938\u0947\u0935\u0928": 7,
+  "\u0906\u0920": 8,
+  "\u0928\u094c": 9,
+  "\u0928\u093e\u0907\u0928": 9,
+  "\u0a38\u0a3f\u0a2b\u0a30": 0,
+  "\u0a07\u0a71\u0a15": 1,
+  "\u0a26\u0a4b": 2,
+  "\u0a24\u0a3f\u0a70\u0a28": 3,
+  "\u0a1a\u0a3e\u0a30": 4,
+  "\u0a2a\u0a70\u0a1c": 5,
+  "\u0a1b\u0a47": 6,
+  "\u0a38\u0a71\u0a24": 7,
+  "\u0a05\u0a71\u0a20": 8,
+  "\u0a28\u0a4c\u0a02": 9,
 };
 
 export function parsePhone(text) {
@@ -41,8 +75,8 @@ export function parsePhone(text) {
   let digits = "";
   let mult = 1;
   for (const w of toks) {
-    if (w === "double" || w === "dabal") { mult = 2; continue; }
-    if (w === "triple" || w === "tripal") { mult = 3; continue; }
+    if (w === "double" || w === "dabal" || w === "\u0921\u092c\u0932") { mult = 2; continue; }
+    if (w === "triple" || w === "tripal" || w === "\u091f\u094d\u0930\u093f\u092a\u0932") { mult = 3; continue; }
     let d = null;
     if (/^\d+$/.test(w)) d = w;
     else if (Object.prototype.hasOwnProperty.call(DIGIT_WORDS, w)) d = String(DIGIT_WORDS[w]);
@@ -59,10 +93,25 @@ export function parsePhone(text) {
 const EMAIL_DIGITS = {
   zero: "0", one: "1", two: "2", three: "3", four: "4",
   five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+  "\u0936\u0942\u0928\u094d\u092f": "0",
+  "\u090f\u0915": "1",
+  "\u0926\u094b": "2",
+  "\u0924\u0940\u0928": "3",
+  "\u091a\u093e\u0930": "4",
+  "\u092a\u093e\u0902\u091a": "5",
+  "\u092a\u093e\u0901\u091a": "5",
+  "\u091b\u0939": "6",
+  "\u0938\u093e\u0924": "7",
+  "\u0906\u0920": "8",
+  "\u0928\u094c": "9",
 };
 
 export function parseEmail(text) {
   let t = String(text || "").toLowerCase().trim();
+  t = t.replace(/(एट|ऐट) (द|दा|दी) रेट/g, " @ ").replace(/डॉट/g, " . ")
+    .replace(/जी ?मेल/g, "gmail").replace(/कॉम/g, "com").replace(/याहू/g, "yahoo")
+    .replace(/आउटलुक/g, "outlook").replace(/हॉटमेल/g, "hotmail")
+    .replace(/अंडरस्कोर/g, " _ ").replace(/डैश/g, " - ");
   t = t.replace(/\bat the rate( of)?\b/g, " @ ").replace(/\bat rate\b/g, " @ ").replace(/\battherate\b/g, " @ ");
   t = t.replace(/\b(underscore|under score)\b/g, " _ ");
   t = t.replace(/\b(dash|hyphen|minus)\b/g, " - ");
@@ -278,8 +327,8 @@ export function parseDigits(text, min, max) {
   let digits = "";
   let mult = 1;
   for (const w of toks) {
-    if (w === "double" || w === "dabal") { mult = 2; continue; }
-    if (w === "triple" || w === "tripal") { mult = 3; continue; }
+    if (w === "double" || w === "dabal" || w === "\u0921\u092c\u0932") { mult = 2; continue; }
+    if (w === "triple" || w === "tripal" || w === "\u091f\u094d\u0930\u093f\u092a\u0932") { mult = 3; continue; }
     let d = null;
     if (/^\d+$/.test(w)) d = w;
     else if (Object.prototype.hasOwnProperty.call(DIGIT_WORDS, w)) d = String(DIGIT_WORDS[w]);
@@ -288,4 +337,50 @@ export function parseDigits(text, min, max) {
     mult = 1;
   }
   return digits.length >= min && digits.length <= max ? digits : null;
+}
+
+// ---- dictation helpers: phone numbers and emails arrive in several pieces ----
+
+// All digits in the text, whether typed ("73 89") or spoken ("seven three").
+export function spokenDigits(text) {
+  const toks = normalizeWords(text).split(" ").filter(Boolean);
+  let digits = "";
+  let mult = 1;
+  for (const w of toks) {
+    if (w === "double" || w === "dabal" || w === "डबल") { mult = 2; continue; }
+    if (w === "triple" || w === "tripal" || w === "ट्रिपल") { mult = 3; continue; }
+    let d = null;
+    if (/^\d+$/.test(w)) d = w;
+    else if (Object.prototype.hasOwnProperty.call(DIGIT_WORDS, w)) d = String(DIGIT_WORDS[w]);
+    if (d === null) { mult = 1; continue; }
+    digits += d.length === 1 ? d.repeat(mult) : d;
+    mult = 1;
+  }
+  return digits;
+}
+
+function sayDigits(d) { return d.split("").join(" "); }
+
+// Returns what to tell the user when only part of a number was heard, or null when it is hopeless.
+export function digitsPartial(text, min) {
+  const d = spokenDigits(text);
+  if (d.length > 0 && d.length < min) return `I heard ${d.length} digits: ${sayDigits(d)}. Say the remaining digits.`;
+  return null;
+}
+
+export function phonePartial(text) {
+  let d = spokenDigits(text);
+  if (d.startsWith("91") && d.length > 10) d = d.slice(2);
+  if (d.length > 0 && d.length < 10) return `I heard ${d.length} digits: ${sayDigits(d)}. Say the remaining digits.`;
+  return null;
+}
+
+export function emailPartial(text) {
+  const t = String(text || "").toLowerCase();
+  const hasAt = /@|\bat\b|attherate|एट|ऐट/.test(t);
+  const letters = t.replace(/[^a-z0-9ऀ-ॿ]/g, "").length;
+  if (!hasAt) return letters >= 2 ? "Got it. Now say at the rate, then the domain, for example gmail dot com." : null;
+  const after = t.split(/@|\bat the rate( of)?\b|\bat rate\b|\battherate\b|\bat\b/).pop() || "";
+  if (after.replace(/[^a-zऀ-ॿ]/g, "").length < 2) return "Now say the domain, for example gmail dot com.";
+  return null;
 }

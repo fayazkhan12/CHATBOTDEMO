@@ -1,7 +1,7 @@
 // A small floating mic for the Detail and Checkout pages.
 // Plain DOM so it needs no changes to the page markup.
 import { createVoiceEngine, describeStop, pickDefaultLang } from "./voice";
-import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress } from "./voicecmd";
+import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress, phonePartial, emailPartial } from "./voicecmd";
 
 const FLOW_KEY = "dw_voice_flow";
 
@@ -60,7 +60,16 @@ function createDock(getConfig) {
   let timer = null;
   let speakTimer = null;
 
-  const setNote = (t) => { note.textContent = t || ""; note.hidden = !t; };
+  // Prompts are spoken and the asked field is outlined, so no bubble covers the form.
+  // Only real problems (mic blocked, no device...) show a short message.
+  let toastTimer = null;
+  const setNote = () => {};
+  const toast = (t) => {
+    clearTimeout(toastTimer);
+    note.textContent = t || "";
+    note.hidden = !t;
+    if (t) toastTimer = setTimeout(() => { note.hidden = true; }, 6000);
+  };
   const setListening = (on) => {
     btn.classList.toggle("listening", on);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
@@ -111,13 +120,13 @@ function createDock(getConfig) {
     if (!alive || id !== runId) return;
     if (!turn) { active = false; return; }
     const next = () => {
-      if (turn.listen) timer = setTimeout(() => listen(turn.lang, id), 450);
+      if (turn.listen) timer = setTimeout(() => listen(turn.lang, id, turn.silenceMs), 450);
       else active = false;
     };
     if (turn.say) { setNote(turn.say); say(turn.say, next, id); } else next();
   }
 
-  function listen(lang, id) {
+  function listen(lang, id, silenceMs) {
     if (!alive || id !== runId || engine) return;
     const cfg = getConfig() || {};
     if (turns >= (cfg.maxTurns || 14)) {
@@ -131,6 +140,7 @@ function createDock(getConfig) {
       lang: lang || pickDefaultLang(),
       once: true,
       idleMs: 12000,
+      silenceMs: silenceMs || 1500,
       onInterim: (t) => { if (t) setNote(`\u201c${t}\u201d`); },
       onFinal: (text) => {
         const c = getConfig() || {};
@@ -146,11 +156,11 @@ function createDock(getConfig) {
         if (engine !== eng) return;
         engine = null;
         setListening(false);
-        if (reason === "idle") { active = false; setNote("I did not hear anything. Tap the mic to continue."); }
-        else if (reason && reason !== "done") { active = false; setNote(describeStop(reason)); }
+        if (reason === "idle") { active = false; }
+        else if (reason && reason !== "done") { active = false; toast(describeStop(reason)); }
       },
     });
-    if (!eng) { active = false; setNote(describeStop("unsupported")); return; }
+    if (!eng) { active = false; toast(describeStop("unsupported")); return; }
     engine = eng;
     setListening(true);
     eng.start();
@@ -185,6 +195,7 @@ function createDock(getConfig) {
     destroy() {
       alive = false;
       clearTimeout(flowTimer);
+      clearTimeout(toastTimer);
       stopAll("");
       if (root.parentNode) root.parentNode.removeChild(root);
     },
@@ -227,10 +238,10 @@ export function routeChanged() {
 
 export const CHECKOUT_VOICE_FIELDS = [
   { key: "name", ask: "What is your full name?", retry: "Sorry, please say your full name again.", parse: parseName, words: ["name", "naam"] },
-  { key: "phone", ask: "Your mobile number, digit by digit.", retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: parsePhone, words: ["phone", "mobile", "number", "contact"] },
-  { key: "email", ask: "Your email address. Say at the rate and dot where needed.", retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, words: ["email", "mail"] },
+  { key: "phone", ask: "Your mobile number, digit by digit.", retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: parsePhone, dictation: true, partial: phonePartial, words: ["phone", "mobile", "number", "contact"] },
+  { key: "email", ask: "Your email address. Say at the rate and dot where needed.", retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial, words: ["email", "mail"] },
   { key: "city", ask: "Which city? Say skip to skip.", retry: "Please say the city name, or say skip.", parse: parseCity, optional: true, words: ["city", "shehar"] },
-  { key: "address", ask: "Your address? Say skip to skip.", retry: "Please say the address, or say skip.", parse: parseAddress, optional: true, words: ["address", "pata"] },
+  { key: "address", ask: "Your address? Say skip to skip.", retry: "Please say the address, or say skip.", parse: parseAddress, dictation: true, optional: true, words: ["address", "pata"] },
 ];
 
 export function highlightPay() {
@@ -243,14 +254,55 @@ export function highlightPay() {
   } catch (e) { /* ignore */ }
 }
 
-// getOpts() -> { fields, onValue(key, value), onDone() }
+// getOpts() -> { fields, onValue(key, value), onDone(), doneText, editText }
+const FIELD_RX = {
+  name: /name|naam/,
+  phone: /phone|mobile|tel|contact/,
+  email: /mail/,
+  city: /city|shehar/,
+  address: /address|pata|street/,
+};
+
+function guessField(key) {
+  const rx = FIELD_RX[key];
+  if (!rx) return null;
+  const nodes = document.querySelectorAll("input, textarea");
+  for (const el of nodes) {
+    if (el.closest && el.closest(".vdock")) continue;
+    let label = "";
+    try { if (el.labels && el.labels[0]) label = el.labels[0].textContent; } catch (e) { /* ignore */ }
+    const s = [el.type, el.name, el.id, el.getAttribute("data-testid"), el.placeholder, el.getAttribute("aria-label"), label].join(" ").toLowerCase();
+    if (key === "name" && /mail|user/.test(s)) continue;
+    if (rx.test(s)) return el;
+  }
+  return null;
+}
+
+// Outlines the field being asked about, so the screen shows where the answer goes.
+function markField(f) {
+  try {
+    document.querySelectorAll(".vfield-attn").forEach((n) => n.classList.remove("vfield-attn"));
+    if (!f) return;
+    const el = f.el || guessField(f.key);
+    if (!el) return;
+    el.classList.add("vfield-attn");
+    if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) { /* ignore */ }
+}
+
 export function createFormGuide(getOpts) {
   let idx = 0;
   let fails = 0;
-  const T = (say, listen) => ({ say, listen, lang: "en-IN" });
+  let buf = "";
+  let partials = 0;
   const fields = () => getOpts().fields;
   const DONE = () => getOpts().doneText || "All details are filled. Please check the screen and tap Pay.";
   const EDIT = () => getOpts().editText || "All details are filled. Say change name, phone or email to edit, or tap Pay.";
+  // Phone numbers, emails and addresses come with pauses, so wait longer before cutting in.
+  const T = (say, listen) => {
+    const f = fields()[idx];
+    return { say, listen, lang: "en-IN", silenceMs: listen && f && f.dictation ? 3200 : undefined };
+  };
 
   function advance(got) {
     const f = fields();
@@ -262,9 +314,10 @@ export function createFormGuide(getOpts) {
     return T(`${got ? "Got it. " : ""}${f[idx].ask}`, true);
   }
 
-  return {
+  const inner = {
     start() {
       const f = fields();
+      buf = ""; partials = 0;
       if (idx >= f.length) return T(EDIT(), true);
       return T(`${idx === 0 ? "Let us fill your details. " : ""}${f[idx].ask}`, true);
     },
@@ -272,31 +325,47 @@ export function createFormGuide(getOpts) {
       const raw = String(text || "");
       const t = normalizeWords(raw);
       const f = fields();
-      if (/\b(stop|cancel|exit|quit|band|ruko)\b/.test(t)) return T("Okay, I stopped. Tap the mic to continue.", false);
+      if (/\b(stop|cancel|exit|quit|band|ruko)\b/.test(t)) { buf = ""; return T("Okay, I stopped. Tap the mic to continue.", false); }
       if (/\b(pay|payment|paisa|bhugtan)\b/.test(t)) return T("Please tap the Pay button yourself when you are ready.", false);
       if (/\b(change|edit|correct|badlo|badal|galat|wrong)\b/.test(t)) {
         const j = f.findIndex((x) => x.words.some((w) => t.split(" ").includes(w)));
-        if (j >= 0) { idx = j; fails = 0; return T(f[j].ask, true); }
+        if (j >= 0) { idx = j; fails = 0; buf = ""; partials = 0; return T(f[j].ask, true); }
       }
-      if (/\b(repeat|again|dobara|once more)\b/.test(t) && idx < f.length) return T(f[idx].ask, true);
+      if (/\b(repeat|again|dobara|once more)\b/.test(t) && idx < f.length) { buf = ""; partials = 0; return T(f[idx].ask, true); }
       if (idx >= f.length) return T(EDIT(), false);
       const cur = f[idx];
-      if (cur.optional && isSkip(t)) { idx += 1; fails = 0; return advance(false); }
-      const v = cur.parse(raw);
+      if (cur.optional && isSkip(t)) { idx += 1; fails = 0; buf = ""; partials = 0; return advance(false); }
+      const joined = cur.dictation ? `${buf} ${raw}`.trim() : raw;
+      const v = cur.parse(joined);
       if (v == null) {
+        if (cur.dictation && cur.partial && partials < 4) {
+          const hint = cur.partial(joined);
+          if (hint) { buf = joined; partials += 1; return T(hint, true); }
+        }
+        buf = ""; partials = 0;
         fails += 1;
         if (fails >= 3) {
           fails = 0;
           idx += 1;
-          if (idx >= f.length) return T("I could not hear that. Please type it, then tap Pay.", false);
+          if (idx >= f.length) return T("I could not hear that. Please type it, then tap the button.", false);
           return T("I am having trouble hearing that. Please type this one, then tap the mic to continue.", false);
         }
         return T(cur.retry, true);
       }
+      buf = ""; partials = 0;
       getOpts().onValue(cur.key, v);
       idx += 1;
       fails = 0;
       return advance(true);
     },
+  };
+
+  const mark = () => {
+    const f = fields();
+    markField(idx < f.length ? f[idx] : null);
+  };
+  return {
+    start() { const r = inner.start(); mark(); return r; },
+    handle(text) { const r = inner.handle(text); mark(); return r; },
   };
 }

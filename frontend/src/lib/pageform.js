@@ -1,5 +1,5 @@
 // Reads the form on the current page and guides the user through it by voice.
-import { parsePhone, parseEmail, parseName, parseCity, parseAddress, parseDigits } from "./voicecmd";
+import { parsePhone, parseEmail, parseName, parseCity, parseAddress, parseDigits, phonePartial, emailPartial, digitsPartial } from "./voicecmd";
 import { createFormGuide } from "./voicedock";
 
 const SKIP_TYPES = new Set(["hidden", "password", "checkbox", "radio", "file", "submit", "button", "reset", "range", "color", "image", "date", "time", "datetime-local", "month", "week"]);
@@ -57,13 +57,13 @@ function specFor(kind, el, label, optional) {
   const lower = label.toLowerCase();
   switch (kind) {
     case "name": return { ask: `What is your ${lower}?`, retry: "Sorry, please say it again.", parse: parseName };
-    case "email": return { ask: "Your email address. Say at the rate and dot where needed." + skip, retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail };
-    case "phone": return { ask: "Your mobile number, digit by digit." + skip, retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: phoneParser(el, label) };
-    case "otp": return { ask: "Say the code, digit by digit.", retry: "I could not get the code. Please say the digits again.", parse: (t) => parseDigits(t, 4, 8) };
-    case "pin": return { ask: "Say the PIN code, digit by digit." + skip, retry: "Please say the PIN code again, digit by digit.", parse: (t) => parseDigits(t, 5, 6) };
+    case "email": return { ask: "Your email address. Say at the rate and dot where needed." + skip, retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial };
+    case "phone": return { ask: "Your mobile number, digit by digit." + skip, retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: phoneParser(el, label), dictation: true, partial: phonePartial };
+    case "otp": return { ask: "Say the code, digit by digit.", retry: "I could not get the code. Please say the digits again.", parse: (t) => parseDigits(t, 4, 8), dictation: true, partial: (t) => digitsPartial(t, 4) };
+    case "pin": return { ask: "Say the PIN code, digit by digit." + skip, retry: "Please say the PIN code again, digit by digit.", parse: (t) => parseDigits(t, 5, 6), dictation: true, partial: (t) => digitsPartial(t, 6) };
     case "number": return { ask: `Say the ${lower}.` + skip, retry: "Please say the number again.", parse: (t) => parseDigits(t, 1, 9) };
     case "city": return { ask: "Which city?" + skip, retry: "Please say the city name." + skip, parse: parseCity };
-    case "address": return { ask: "Your address?" + skip, retry: "Please say the address." + skip, parse: parseAddress };
+    case "address": return { ask: "Your address?" + skip, retry: "Please say the address." + skip, parse: parseAddress, dictation: true };
     default: return { ask: `Please say ${lower}.` + skip, retry: `Please say ${lower} again.` + skip, parse: (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length >= 1 && s.length <= 120 ? s : null; } };
   }
 }

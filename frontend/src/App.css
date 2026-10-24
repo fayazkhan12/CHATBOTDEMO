@@ -441,3 +441,5 @@ a { color: inherit; text-decoration: none; }
 .vdock-btn.listening { background: var(--red); animation: voice-pulse 1.2s ease-in-out infinite; }
 .pay-attn { animation: pay-glow 1s ease-in-out infinite; }
 @keyframes pay-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(232, 130, 12, 0.6); } 50% { box-shadow: 0 0 0 10px rgba(232, 130, 12, 0); } }
+.vdock-note { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 70; max-width: min(360px, calc(100vw - 32px)); }
+.vfield-attn { outline: 3px solid #E8820C !important; outline-offset: 2px; border-radius: 12px; transition: outline-color 0.2s; }
