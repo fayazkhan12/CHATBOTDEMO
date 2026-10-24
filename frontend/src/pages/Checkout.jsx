@@ -96,8 +96,18 @@ export default function Checkout() {
         modal: { ondismiss: () => setPaying(false) },
       };
       new window.Razorpay(options).open();
-    } catch {
-      toast.error("Could not start payment.");
+    } catch (err) {
+      const detail = err && err.response && err.response.data && err.response.data.detail;
+      const msg = typeof detail === "string" ? detail : "Could not start payment.";
+      toast.error(msg);
+      if (typeof detail === "string") {
+        const key = /city/i.test(detail) ? "city" : /address/i.test(detail) ? "address" : /email/i.test(detail) ? "email" : /mobile|phone/i.test(detail) ? "phone" : /name/i.test(detail) ? "name" : null;
+        if (key) {
+          setErrors((o) => ({ ...o, [key]: msg }));
+          const el = document.querySelector(`[data-testid="checkout-${key}"]`);
+          if (el && el.focus) el.focus();
+        }
+      }
       setPaying(false);
     }
   };

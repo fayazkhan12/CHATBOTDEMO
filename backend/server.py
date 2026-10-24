@@ -1106,9 +1106,9 @@ def _traveller_problem(t) -> str:
     if not m or m.group(1)[0] not in "6789" or len(set(m.group(1))) == 1:
         return "Please enter a valid 10 digit Indian mobile number."
     if city and (not (2 <= len(city) <= 40) or any(ch.isdigit() for ch in city) or not _only_letters(city) or _is_state(city)):
-        return "Please enter a valid city (a state is not a city)."
+        return (f"{city.title()} is a state, not a city. Please enter your city, for example Gurugram." if _is_state(city) else "Please enter a valid city name.")
     if address and (len(address) < 8 or len(address) > 160 or _is_state(address) or (len(address.split()) < 2 and not any(ch.isdigit() for ch in address))):
-        return "Please enter the full address, with house number, street and area."
+        return ("That is a state. Please enter the full address, with house number, street and area." if _is_state(address) else "Please enter the full address, with house number, street and area.")
     return ""
 
 
