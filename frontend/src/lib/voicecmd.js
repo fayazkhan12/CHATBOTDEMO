@@ -149,17 +149,65 @@ export function parseName(text) {
   return titleCase(words.join(" "));
 }
 
+// States and union territories are not cities. Goa, Delhi, Chandigarh and Puducherry are left out on purpose:
+// people use them as city names.
+const NOT_CITIES = new Set([
+  "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh", "chattisgarh", "gujarat", "haryana",
+  "himachal pradesh", "himachal", "jharkhand", "karnataka", "kerala", "madhya pradesh", "maharashtra", "manipur",
+  "meghalaya", "mizoram", "nagaland", "odisha", "orissa", "punjab", "rajasthan", "sikkim", "tamil nadu", "tamilnadu",
+  "telangana", "tripura", "uttar pradesh", "uttarakhand", "uttaranchal", "west bengal", "jammu and kashmir",
+  "jammu kashmir", "ladakh", "lakshadweep", "andaman and nicobar", "india", "bharat",
+  "आंध्र प्रदेश", "असम", "बिहार",
+  "छत्तीसगढ़", "छत्तीसगढ", "गुजरात",
+  "हरियाणा", "हिमाचल प्रदेश", "झारखंड",
+  "कर्नाटक", "केरल", "मध्य प्रदेश",
+  "महाराष्ट्र", "ओडिशा", "पंजाब",
+  "राजस्थान", "तमिलनाडु", "तेलंगाना",
+  "उत्तर प्रदेश", "उत्तराखंड",
+  "पश्चिम बंगाल", "भारत",
+  "ਪੰਜਾਬ", "ਹਰਿਆਣਾ",
+]);
+
+export function isStateName(text) {
+  const t = normalizeWords(text).replace(/\b(state|rajya)\b/g, "").replace(/\s+/g, " ").trim();
+  return NOT_CITIES.has(t);
+}
+
+function stateName(text) {
+  return titleCase(normalizeWords(text).replace(/\b(state|rajya)\b/g, "").replace(/\s+/g, " ").trim());
+}
+
 export function parseCity(text) {
-  const t = String(text || "").replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim()
-    .replace(/^(my )?city is\s+|^(i live in|i am from|from)\s+/i, "");
-  if (t.length < 2 || t.length > 60 || /\d/.test(t)) return null;
+  let t = String(text || "").replace(/[.,!?;:।]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(my )?(city|town) is\s+|^(i live in|i am from|i'm from|im from|from|mera shehar|mera sheher|mera city)\s+/i, "");
+  t = t.replace(/\s+(hai|hoon|hu|se|se hu|se hoon|है|से)$/i, "").trim();
+  if (t.length < 2 || t.length > 40 || /\d/.test(t)) return null;
+  if (!/^[\p{L}\p{M}'. \-]+$/u.test(t)) return null;
+  if (t.split(" ").length > 4) return null;
+  if (isStateName(t)) return null;
   return titleCase(t);
 }
 
+export function explainCity(text) {
+  const t = String(text || "").replace(/^(my )?(city|town) is\s+/i, "");
+  if (isStateName(t)) return `${stateName(t)} is a state, not a city. Please say your city name, for example Gurugram, or say skip.`;
+  return null;
+}
+
 export function parseAddress(text) {
-  const t = String(text || "").replace(/\s+/g, " ").trim()
-    .replace(/^(my )?address is\s+|^(mera )?pata\s+/i, "");
-  return t.length >= 4 && t.length <= 160 ? t : null;
+  let t = String(text || "").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(my )?address is\s+|^(mera )?pata\s+/i, "").trim();
+  if (t.length < 8 || t.length > 160) return null;
+  if (!/[\p{L}]/u.test(t)) return null;
+  if (isStateName(t)) return null;
+  if (t.split(" ").length < 2 && !/\d/.test(t)) return null;
+  return t;
+}
+
+export function explainAddress(text) {
+  const t = String(text || "").replace(/^(my )?address is\s+/i, "");
+  if (isStateName(t)) return "That is a state. Please say the full address, with house number, street and area, or say skip.";
+  return "Please say the full address, with house number, street and area, or say skip.";
 }
 
 export function isSkip(normalized) {

@@ -1,7 +1,7 @@
 // A small floating mic for the Detail and Checkout pages.
 // Plain DOM so it needs no changes to the page markup.
 import { createVoiceEngine, describeStop, pickDefaultLang } from "./voice";
-import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress, phonePartial, emailPartial } from "./voicecmd";
+import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress, phonePartial, emailPartial, explainCity, explainAddress } from "./voicecmd";
 
 const FLOW_KEY = "dw_voice_flow";
 
@@ -240,8 +240,8 @@ export const CHECKOUT_VOICE_FIELDS = [
   { key: "name", ask: "What is your full name?", retry: "Sorry, please say your full name again.", parse: parseName, words: ["name", "naam"] },
   { key: "phone", ask: "Your mobile number, digit by digit.", retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: parsePhone, dictation: true, partial: phonePartial, words: ["phone", "mobile", "number", "contact"] },
   { key: "email", ask: "Your email address. Say at the rate and dot where needed.", retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial, words: ["email", "mail"] },
-  { key: "city", ask: "Which city? Say skip to skip.", retry: "Please say the city name, or say skip.", parse: parseCity, optional: true, words: ["city", "shehar"] },
-  { key: "address", ask: "Your address? Say skip to skip.", retry: "Please say the address, or say skip.", parse: parseAddress, dictation: true, optional: true, words: ["address", "pata"] },
+  { key: "city", ask: "Which city? Say skip to skip.", retry: "Please say the city name, or say skip.", parse: parseCity, explain: explainCity, optional: true, words: ["city", "shehar"] },
+  { key: "address", ask: "Your address? Say skip to skip.", retry: "Please say the address, or say skip.", parse: parseAddress, explain: explainAddress, dictation: true, optional: true, words: ["address", "pata"] },
 ];
 
 export function highlightPay() {
@@ -350,7 +350,7 @@ export function createFormGuide(getOpts) {
           if (idx >= f.length) return T("I could not hear that. Please type it, then tap the button.", false);
           return T("I am having trouble hearing that. Please type this one, then tap the mic to continue.", false);
         }
-        return T(cur.retry, true);
+        return T((cur.explain && cur.explain(joined)) || cur.retry, true);
       }
       buf = ""; partials = 0;
       getOpts().onValue(cur.key, v);

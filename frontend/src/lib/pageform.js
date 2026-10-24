@@ -1,5 +1,5 @@
 // Reads the form on the current page and guides the user through it by voice.
-import { parsePhone, parseEmail, parseName, parseCity, parseAddress, parseDigits, phonePartial, emailPartial, digitsPartial } from "./voicecmd";
+import { parsePhone, parseEmail, parseName, parseCity, parseAddress, parseDigits, phonePartial, emailPartial, digitsPartial, explainCity, explainAddress } from "./voicecmd";
 import { createFormGuide } from "./voicedock";
 
 const SKIP_TYPES = new Set(["hidden", "password", "checkbox", "radio", "file", "submit", "button", "reset", "range", "color", "image", "date", "time", "datetime-local", "month", "week"]);
@@ -62,8 +62,8 @@ function specFor(kind, el, label, optional) {
     case "otp": return { ask: "Say the code, digit by digit.", retry: "I could not get the code. Please say the digits again.", parse: (t) => parseDigits(t, 4, 8), dictation: true, partial: (t) => digitsPartial(t, 4) };
     case "pin": return { ask: "Say the PIN code, digit by digit." + skip, retry: "Please say the PIN code again, digit by digit.", parse: (t) => parseDigits(t, 5, 6), dictation: true, partial: (t) => digitsPartial(t, 6) };
     case "number": return { ask: `Say the ${lower}.` + skip, retry: "Please say the number again.", parse: (t) => parseDigits(t, 1, 9) };
-    case "city": return { ask: "Which city?" + skip, retry: "Please say the city name." + skip, parse: parseCity };
-    case "address": return { ask: "Your address?" + skip, retry: "Please say the address." + skip, parse: parseAddress, dictation: true };
+    case "city": return { ask: "Which city?" + skip, retry: "Please say the city name." + skip, parse: parseCity, explain: explainCity };
+    case "address": return { ask: "Your address?" + skip, retry: "Please say the address." + skip, parse: parseAddress, explain: explainAddress, dictation: true };
     default: return { ask: `Please say ${lower}.` + skip, retry: `Please say ${lower} again.` + skip, parse: (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length >= 1 && s.length <= 120 ? s : null; } };
   }
 }
