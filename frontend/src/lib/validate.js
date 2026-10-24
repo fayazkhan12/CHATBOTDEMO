@@ -8,13 +8,48 @@ const DOMAIN_TYPOS = {
   "yahooo.com": "yahoo.com", "yaho.com": "yahoo.com", "hotmial.com": "hotmail.com", "outlok.com": "outlook.com",
 };
 
+// Names that are placeholders, not a real person. "Traveller" is what a new account is called.
+const GENERIC_NAMES = new Set([
+  "traveller", "traveler", "guest", "user", "customer", "test", "testing", "demo", "dummy", "name", "fullname",
+  "full", "your", "my", "na", "n", "a", "none", "unknown", "admin", "abc", "xyz", "asdf", "qwerty", "sample", "example",
+]);
+
 export function validateName(v) {
   const t = String(v || "").replace(/\s+/g, " ").trim();
-  if (!t) return "Please enter your full name.";
+  if (!t) return "Please enter the traveller's full name.";
   if (t.length < 2 || t.length > 60) return "Name must be 2 to 60 letters.";
   if (!/^[\p{L}\p{M}'. \-]+$/u.test(t)) return "Name can have only letters and spaces.";
-  if (t.replace(/[^\p{L}]/gu, "").length < 2) return "Please enter your full name.";
+  const letters = t.replace(/[^\p{L}]/gu, "");
+  if (letters.length < 2) return "Please enter the traveller's full name.";
+  if (/^(.)\1+$/u.test(letters.toLowerCase())) return "Please enter a real name.";
+  if (t.toLowerCase().split(" ").every((w) => GENERIC_NAMES.has(w.replace(/[.']/g, "")))) {
+    return `"${t}" is not a real name. Please enter the traveller's full name, as on their ID.`;
+  }
   return "";
+}
+
+// A saved name that is only a placeholder should not be pre-filled.
+export function cleanName(n) {
+  const t = String(n || "").trim();
+  return validateName(t) ? "" : t;
+}
+
+function titleCaseWords(s) {
+  return s.split(" ").map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(" ");
+}
+
+// Tidy what was typed before it is sent: spaces, capital letters, +91 on the number.
+export function tidyTraveller(t) {
+  const x = { ...(t || {}) };
+  if (x.name) x.name = titleCaseWords(String(x.name).replace(/\s+/g, " ").trim());
+  if (x.city) x.city = titleCaseWords(String(x.city).replace(/\s+/g, " ").trim());
+  if (x.address) x.address = String(x.address).replace(/\s+/g, " ").trim();
+  if (x.email) x.email = String(x.email).trim().toLowerCase();
+  if (x.phone) {
+    const m = String(x.phone).replace(/[\s\-()]/g, "").match(/^(?:\+91|0091|91|0)?(\d{10})$/);
+    if (m) x.phone = `+91 ${m[1]}`;
+  }
+  return x;
 }
 
 export function validateEmail(v) {

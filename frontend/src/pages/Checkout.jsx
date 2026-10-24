@@ -5,7 +5,7 @@ import { http, loadRazorpay } from "../lib/api";
 import { useVoiceDock, useFormGuide, CHECKOUT_VOICE_FIELDS, highlightPay } from "../lib/useVoiceDock";
 import { useAuth } from "../lib/auth";
 import { ShieldCheck } from "lucide-react";
-import { validateTraveller } from "../lib/validate";
+import { validateTraveller, cleanName, tidyTraveller } from "../lib/validate";
 
 export default function Checkout() {
   const { bookingId } = useParams();
@@ -14,7 +14,7 @@ export default function Checkout() {
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [form, setForm] = useState({ name: user?.name || "", email: user?.email || "", phone: "", address: "", city: "", state: "" });
+  const [form, setForm] = useState({ name: cleanName(user?.name), email: user?.email || "", phone: "", address: "", city: "", state: "" });
   const [errors, setErrors] = useState({});
   // re-check the fields that are showing an error while the user fixes them
   useEffect(() => {
@@ -37,7 +37,7 @@ export default function Checkout() {
   useEffect(() => {
     http.get(`/bookings/${bookingId}`).then(({ data }) => {
       setBooking(data);
-      setForm(f => ({ ...f, name: data.traveller?.name || user?.name || "", email: data.traveller?.email || user?.email || "" }));
+      setForm(f => ({ ...f, name: cleanName(data.traveller?.name) || cleanName(user?.name), email: data.traveller?.email || user?.email || "" }));
     }).catch(() => toast.error("Booking not found")).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId]);
@@ -57,7 +57,7 @@ export default function Checkout() {
     try {
       // Fetch Razorpay order again to get fresh key_id (we already have one on booking)
       const { data: order } = await http.post("/bookings", {
-        item: booking.item, traveller: form,
+        item: booking.item, traveller: tidyTraveller(form),
         amount_rupees: booking.amount_rupees, service: booking.service,
       });
       const bid = order.booking_id || bookingId;

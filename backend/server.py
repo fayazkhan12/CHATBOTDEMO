@@ -1077,6 +1077,10 @@ _STATES = {
     "telangana", "tripura", "uttar pradesh", "uttarakhand", "uttaranchal", "west bengal", "jammu and kashmir",
     "jammu kashmir", "ladakh", "lakshadweep", "andaman and nicobar", "india", "bharat",
 }
+_GENERIC_NAMES = {
+    "traveller", "traveler", "guest", "user", "customer", "test", "testing", "demo", "dummy", "name", "fullname",
+    "full", "your", "my", "na", "n", "a", "none", "unknown", "admin", "abc", "xyz", "asdf", "qwerty", "sample", "example",
+}
 _EMAIL_RX = _re.compile(r"^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$", _re.I)
 
 
@@ -1099,6 +1103,10 @@ def _traveller_problem(t) -> str:
     name, email, city, address = get("name"), get("email"), get("city"), get("address")
     if not (2 <= len(name) <= 60) or not _only_letters(name) or sum(ch.isalpha() for ch in name) < 2:
         return "Please enter a valid full name."
+    if all(w.replace(".", "").replace("'", "").lower() in _GENERIC_NAMES for w in name.split()):
+        return f'"{name}" is not a real name. Please enter the traveller\'s full name, as on their ID.'
+    if len(set(name.replace(" ", "").lower())) == 1:
+        return "Please enter a real name."
     if len(email) > 120 or ".." in email or not _EMAIL_RX.match(email):
         return "Please enter a valid email address."
     digits = _re.sub(r"[\s\-()]", "", phone_raw)
