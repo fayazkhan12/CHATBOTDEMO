@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useVoiceDock, markVoiceFlow } from "../lib/useVoiceDock";
+import { useVoiceDock, markVoiceFlow, takeReserveFlow } from "../lib/useVoiceDock";
 import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
 import { ArrowLeft, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +43,12 @@ export default function Detail() {
       setBooking(false);
     }
   };
+
+  useEffect(() => {
+    if (!item) return;
+    if (takeReserveFlow()) { markVoiceFlow(); book(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item]);
 
   useVoiceDock({
     maxTurns: 5,

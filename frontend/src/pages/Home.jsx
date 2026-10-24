@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pickDefaultLang, saveLang } from "../lib/voice";
-import { resolvePick, hasPickIntent } from "../lib/voicecmd";
+import { resolvePick, hasPickIntent, isStrongReserve } from "../lib/voicecmd";
 import { guardReply } from "../lib/guard";
 import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
@@ -314,7 +314,7 @@ export default function Home() {
     }
     const pick = resolvePick(said, lastCardsRef.current);
     if (pick) {
-      markVoiceFlow();
+      markVoiceFlow(isStrongReserve(said) ? "reserve" : undefined);
       openCardRef.current(pick);
       return;
     }

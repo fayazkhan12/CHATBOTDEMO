@@ -6,11 +6,23 @@ import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, p
 const FLOW_KEY = "dw_voice_flow";
 
 // Set when the user got here by voice, so the next page starts listening by itself.
-export function markVoiceFlow() {
-  try { window.sessionStorage.setItem(FLOW_KEY, "1"); } catch (e) { /* ignore */ }
+// markVoiceFlow("reserve") also tells the Detail page to reserve by itself.
+export function markVoiceFlow(mode) {
+  try {
+    window.sessionStorage.setItem(FLOW_KEY, mode === "reserve" ? `reserve@${Date.now()}` : "1");
+  } catch (e) { /* ignore */ }
 }
 function peekVoiceFlow() {
   try { return window.sessionStorage.getItem(FLOW_KEY) === "1"; } catch (e) { return false; }
+}
+// True once, and only if the reserve request is fresh (so an old one can never book by surprise).
+export function takeReserveFlow() {
+  try {
+    const v = window.sessionStorage.getItem(FLOW_KEY) || "";
+    if (v.indexOf("reserve@") !== 0) return false;
+    window.sessionStorage.removeItem(FLOW_KEY);
+    return Date.now() - Number(v.slice(8)) < 30000;
+  } catch (e) { return false; }
 }
 function clearVoiceFlow() {
   try { window.sessionStorage.removeItem(FLOW_KEY); } catch (e) { /* ignore */ }
@@ -20,8 +32,7 @@ const MIC_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" str
 
 // getConfig() -> { onStart(), onText(text), maxTurns }
 // A turn is { say?: string, listen?: boolean, lang?: string }.
-export function mountDock(getConfig) {
-  if (typeof document === "undefined") return { destroy() {}, start() {} };
+function createDock(getConfig) {
 
   const root = document.createElement("div");
   root.className = "vdock";
@@ -159,12 +170,19 @@ export function mountDock(getConfig) {
 
   btn.addEventListener("click", () => { if (active) stopAll(""); else start(); });
 
-  const flowTimer = peekVoiceFlow()
-    ? setTimeout(() => { if (alive) { clearVoiceFlow(); start(); } }, 800)
-    : null;
+  let flowTimer = null;
+  // Called whenever the page (or its voice owner) changes.
+  function changed() {
+    stopAll("");
+    clearTimeout(flowTimer);
+    if (peekVoiceFlow()) {
+      flowTimer = setTimeout(() => { if (alive) { clearVoiceFlow(); start(); } }, 800);
+    }
+  }
 
   return {
     start,
+    changed,
     destroy() {
       alive = false;
       clearTimeout(flowTimer);
@@ -172,6 +190,38 @@ export function mountDock(getConfig) {
       if (root.parentNode) root.parentNode.removeChild(root);
     },
   };
+}
+
+// One shared dock for the whole app. A page can register its own commands with a higher
+// priority; the app-wide commands (priority 0) are used when no page has its own.
+const owners = [];
+let sharedDock = null;
+
+function topConfig() {
+  let best = null;
+  for (const o of owners) if (!best || o.priority >= best.priority) best = o;
+  return best ? best.getConfig() : null;
+}
+
+export function mountDock(getConfig, priority = 1) {
+  if (typeof document === "undefined") return { destroy() {}, start() {} };
+  const owner = { getConfig, priority };
+  owners.push(owner);
+  if (!sharedDock) sharedDock = createDock(topConfig);
+  sharedDock.changed();
+  return {
+    start() { if (sharedDock) sharedDock.start(); },
+    destroy() {
+      const i = owners.indexOf(owner);
+      if (i >= 0) owners.splice(i, 1);
+      if (!sharedDock) return;
+      if (!owners.length) { sharedDock.destroy(); sharedDock = null; } else sharedDock.changed();
+    },
+  };
+}
+
+export function routeChanged() {
+  if (sharedDock) sharedDock.changed();
 }
 
 // ---- guided form filling ----

@@ -1,16 +1,17 @@
 import { useEffect, useRef } from "react";
 import { mountDock, createFormGuide } from "./voicedock";
 
-export { CHECKOUT_VOICE_FIELDS, highlightPay, markVoiceFlow } from "./voicedock";
+export { CHECKOUT_VOICE_FIELDS, highlightPay, markVoiceFlow, takeReserveFlow, routeChanged } from "./voicedock";
 
 // config: { onStart(), onText(text), maxTurns } - read fresh on every turn.
-export function useVoiceDock(config) {
+// priority: pages use the default (1); the app-wide dock uses 0.
+export function useVoiceDock(config, priority = 1) {
   const ref = useRef(config);
   ref.current = config;
   useEffect(() => {
-    const dock = mountDock(() => ref.current);
+    const dock = mountDock(() => ref.current, priority);
     return () => dock.destroy();
-  }, []);
+  }, [priority]);
 }
 
 // options: { fields, onValue(key, value), onDone() }

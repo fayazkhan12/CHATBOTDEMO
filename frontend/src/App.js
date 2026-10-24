@@ -13,6 +13,7 @@ import AuthCallback from "./pages/AuthCallback";
 import BookingConfirm from "./pages/BookingConfirm";
 import TripShare from "./pages/TripShare";
 import "./App.css";
+import GlobalVoice from "./lib/GlobalVoice";
 
 function Shell() {
   const location = useLocation();
@@ -20,6 +21,7 @@ function Shell() {
   return (
     <>
       <Navbar />
+      <GlobalVoice />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/search" element={<Results />} />

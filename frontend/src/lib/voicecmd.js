@@ -246,3 +246,22 @@ export function hasPickIntent(text) {
   if (!words.length || words.length > 6) return false;
   return words.some((w) => PICK_VERBS.has(w) || NEXT_OK.has(w));
 }
+
+// ---- app-wide voice commands ----
+
+const wordsOf = (text) => normalizeWords(text).split(" ").filter(Boolean);
+const hasAny = (text, list) => { const w = wordsOf(text); return w.some((x) => list.includes(x)); };
+
+// "reserve" said on purpose (not just "yes" or "ok")
+export function isStrongReserve(text) {
+  return hasAny(text, ["reserve", "book", "booking", "bukk", "confirm", "बुक", "रिज़र्व", "रिजर्व", "कन्फर्म"]);
+}
+export function isHomeIntent(text) {
+  return hasAny(text, ["home", "ghar", "chat", "start", "shuru", "होम", "घर"]);
+}
+export function isBookingsIntent(text) {
+  return hasAny(text, ["booking", "bookings", "trips", "trip", "बुकिंग"]);
+}
+export function isLoginIntent(text) {
+  return hasAny(text, ["login", "signin", "sign", "log", "लॉगिन"]);
+}
