@@ -607,6 +607,15 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 rows = [(h, None) for h in (data.get("items") or [])[:PAGE_SIZE]]
 
         out = [_hotel_card(h, req.destination, dist, center["label"] if (center and dist is not None) else None) for h, dist in rows]
+        try:
+            nights = max(1, (date.fromisoformat(req.end_date) - date.fromisoformat(req.start_date)).days)
+        except ValueError:
+            nights = 1
+        for card in out:  # the hotel page needs these to load live photos, rooms and prices (patch_live)
+            card["search_id"] = sid
+            card["hotel_id"] = str(card["id"])[3:]
+            card["check_in"], card["check_out"] = req.start_date, req.end_date
+            card["nights"], card["guests"] = nights, req.travellers
         return {"items": out, "total": total, "page": page}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
@@ -974,6 +983,8 @@ _ITEM_KEYS = [
     "id", "type", "provider", "mode", "title", "brand", "origin", "destination", "rating", "location",
     "price", "currency", "image", "amenities", "meta", "departure", "arrival", "duration", "stops",
     "cabin", "baggage", "nights", "price_token",
+    "search_id", "hotel_id", "check_in", "check_out", "guests",
+    "recommendation_id", "room_name", "cancellation", "board",
 ]
 
 
@@ -1632,6 +1643,15 @@ async def chat_stream(req: ChatRequest, request: Request):
 
 
 # ---------- app wiring ----------
+try:  # live hotel photos, rooms and prices (patch_live); an optional feature must never stop the API from starting
+    try:
+        import hotel_live as _hotel_live
+    except ImportError:  # the app was started from the repo root as backend.server
+        from backend import hotel_live as _hotel_live
+    _hotel_live.set_signer(_price_token)
+    app.include_router(_hotel_live.router)
+except Exception:
+    logger.exception("live hotel details are switched off")
 app.include_router(api)
 
 _origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
