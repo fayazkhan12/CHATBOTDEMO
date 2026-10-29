@@ -573,3 +573,14 @@ a { color: inherit; text-decoration: none; }
   .topbar, .vdock, .vdock-note, .no-print, .dl-mobile-bar { display: none !important; }
   .voucher-page { margin: 0 auto !important; }
 }
+/* phones: the hotel search form (two date boxes side by side) could not shrink, so the page scrolled sideways on 360px and 320px screens */
+.search-fields, .search-fields .field { min-width: 0; }
+.field-input input[type="date"] { min-width: 0; }
+@media (max-width: 640px) {
+  .search-fields { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 380px) {
+  .search-fields.is-hotel .field-input { flex-wrap: wrap; }
+  .search-fields.is-hotel .field-input input[type="date"] { flex: 1 1 100%; }
+  .search-fields.is-hotel .date-divider { display: none; }
+}

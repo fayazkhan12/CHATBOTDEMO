@@ -653,56 +653,6 @@ async def login(body: LoginIn, request: Request):
     return {"token": _make_jwt(user["user_id"]), "user": {"user_id": user["user_id"], "email": user["email"], "name": user["name"], "picture": user.get("picture")}}
 
 
-@api.post("/auth/session")
-async def exchange_session(request: Request, response: Response):
-    """Exchange Emergent OAuth session_id (X-Session-ID header) for a session cookie."""
-    _rate_limit(f"session:{_client_ip(request)}", 10, 300)
-    session_id = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
-    try:
-        async with httpx.AsyncClient(timeout=15) as client_http:
-            r = await client_http.get(
-                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                headers={"X-Session-ID": session_id},
-            )
-        if r.status_code != 200:
-            raise HTTPException(status_code=401, detail="Session exchange failed")
-        data = r.json()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning("Google session exchange error: %s", exc)
-        raise HTTPException(status_code=502, detail="Could not reach auth provider") from exc
-
-    email = (data.get("email") or "").lower()
-    name = data.get("name") or email.split("@")[0]
-    picture = data.get("picture")
-    session_token = data["session_token"]
-
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        user = {
-            "user_id": user_id, "email": email, "name": name, "picture": picture,
-            "provider": "google", "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await db.users.insert_one(dict(user))
-    else:
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"name": name, "picture": picture}})
-
-    await db.user_sessions.insert_one({
-        "user_id": user["user_id"], "session_token": session_token,
-        "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-        "created_at": datetime.now(timezone.utc),
-    })
-    response.set_cookie(
-        key="session_token", value=session_token, max_age=7 * 24 * 60 * 60,
-        httponly=True, secure=True, samesite="none", path="/",
-    )
-    return {"user": {"user_id": user["user_id"], "email": email, "name": name, "picture": picture}}
-
-
 # ---------- OTP login (phone / email) ----------
 import secrets as _secrets
 

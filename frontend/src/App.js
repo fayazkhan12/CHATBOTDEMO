@@ -8,7 +8,6 @@ import Detail from "./pages/Detail";
 import Checkout from "./pages/Checkout";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
-import AuthCallback from "./pages/AuthCallback";
 import BookingConfirm from "./pages/BookingConfirm";
 import TripShare from "./pages/TripShare";
 import "./App.css";
@@ -45,19 +44,11 @@ function Shell() {
   );
 }
 
-function AppRouter() {
-  // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-  if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
-    return <AuthCallback />;
-  }
-  return <Shell />;
-}
-
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <AppRouter />
+        <Shell />
         <Toaster richColors position="top-right" theme="dark" />
       </BrowserRouter>
     </AuthProvider>
