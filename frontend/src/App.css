@@ -485,3 +485,91 @@ a { color: inherit; text-decoration: none; }
   .dl-room-img { width: 88px; height: 66px; }
   .dl-room-price { grid-column: 1 / -1; flex-direction: row; align-items: baseline; justify-content: flex-end; gap: 8px; }
 }
+/* polish-v1 (patch_polish): demo labels, trip summary, mobile reserve bar, dashboard actions */
+.demo-chip { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 4px; background: rgba(245, 158, 11, .16); color: #92580a; font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; vertical-align: 1px; }
+.dl-demo { margin: 0 0 18px; background: rgba(245, 158, 11, .12); color: #7a4a08; }
+.dl-trip { border: 1px solid var(--line); border-radius: 14px; padding: 18px; background: var(--surface); }
+.dl-leg { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.2fr) minmax(0, 1fr); align-items: center; gap: 12px; }
+.dl-stop { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dl-stop strong { font-family: 'Jost', sans-serif; font-size: 24px; letter-spacing: -0.01em; }
+.dl-stop span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.dl-stop em { font-style: normal; color: var(--gold); font-size: 11px; }
+.dl-stop-end { text-align: right; align-items: flex-end; }
+.dl-leg-mid { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.dl-leg-mid i { display: block; width: 100%; height: 2px; background: var(--line-strong); border-radius: 2px; }
+.dl-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 16px 0 0; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+.dl-facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+.dl-facts dd { margin: 2px 0 0; font-size: 14px; }
+.dl-mobile-bar { display: none; }
+.show-more-row { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 22px 0 6px; color: var(--muted); }
+.booking-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.booking-status.payment_failed { background: rgba(217, 45, 32, .12); color: var(--red); }
+.not-found { max-width: 560px; margin: 80px auto; }
+.not-found h2 { font-family: 'Jost', sans-serif; margin: 0 0 8px; color: var(--text); font-size: 28px; }
+.not-found p { margin: 0 0 18px; }
+/* icons sit beside their text (Tailwind's base styles make every svg a block) */
+.btn-ghost, .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-ghost svg, .btn-primary svg { flex: none; }
+.result-type { display: inline-flex; align-items: center; gap: 6px; }
+.result-type .demo-chip { margin-left: 0; }
+.dl-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 20px; color: var(--muted); font-size: 14px; }
+.dl-meta span { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.dl-meta svg { flex: none; margin-top: 3px; }
+.dl-row-label { display: inline-flex; align-items: center; gap: 6px; }
+.dl-row-label svg { flex: none; }
+/* flights, buses and cabs: a flat photo banner, so the trip details are visible without scrolling */
+.detail-hero.dl-hero-flat { aspect-ratio: auto; height: 220px; margin-bottom: 28px; }
+/* chat box on the home page: the text field could not shrink, so on phones it pushed the send button off screen */
+.agent-compose input { min-width: 0; }
+.agent-compose .icon-btn { flex: none; }
+/* the suggestion list of the destination box hangs below the search card, so the card must not clip it */
+.search-shell { overflow: visible; }
+.search-fields { border-radius: 0 0 15px 15px; }
+.search-fields > .field:first-child { border-bottom-left-radius: 14px; }
+.search-submit { border-bottom-right-radius: 14px; }
+/* search tabs: the old dark-theme colours were nearly invisible on the dark search card */
+.service-tab { color: rgba(255, 255, 255, .74); }
+.service-tab:hover { color: #fff; }
+.service-tab.active { color: #fff; background: rgba(255, 255, 255, .1); }
+.service-tab:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+@media (min-width: 1051px) {
+  .search-fields.is-hotel { grid-template-columns: 2fr 1.6fr 0.9fr auto; }
+}
+@media (max-width: 1050px) {
+  .search-submit { grid-column: 1 / -1; padding: 16px 32px; border-bottom-left-radius: 14px; }
+  .search-fields > .field:first-child { border-bottom-left-radius: 0; }
+  .search-fields.is-hotel .field:first-child { grid-column: 1 / -1; }
+  .detail-page { padding-bottom: 96px; }
+  .dl-mobile-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 65; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 20px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line-strong); box-shadow: 0 -6px 24px rgba(5, 20, 75, .12); }
+  .dl-mobile-price { display: flex; flex-direction: column; min-width: 0; }
+  .dl-mobile-price strong { font-family: 'Jost', sans-serif; font-size: 22px; letter-spacing: -0.01em; }
+  .dl-mobile-price small { color: var(--muted); font-size: 11.5px; }
+  .dl-mobile-bar .btn-primary { padding: 13px 26px; font-size: 15px; white-space: nowrap; }
+  .has-reserve-bar .vdock { bottom: 92px; }
+}
+@media (max-width: 520px) {
+  .detail-hero.dl-hero-flat { height: 160px; }
+  .agent-compose { gap: 8px; padding: 12px; }
+  .agent-compose input { padding: 12px 14px; font-size: 14px; }
+  .service-tabs { padding: 8px 6px 0; gap: 0; }
+  .service-tab { flex: 1 1 0; min-width: 0; justify-content: center; padding: 12px 4px; gap: 5px; font-size: 12px; }
+  .service-tab.active::after { left: 6px; right: 6px; }
+  .voucher-grid { grid-template-columns: 1fr !important; }
+  .dl-stop strong { font-size: 20px; }
+  .booking-card { grid-template-columns: 1fr; }
+  .booking-actions { justify-content: flex-start; }
+}
+@media (max-width: 380px) {
+  .topbar { padding: 12px 12px; }
+  .brand { font-size: 18px; gap: 8px; }
+  .brand-logo { width: 30px; height: 30px; }
+  .top-actions { gap: 8px; }
+  .top-actions .btn-ghost, .top-actions .btn-primary { padding: 8px 12px; }
+}
+@media (max-width: 360px) {
+  .service-tab svg { display: none; }
+}
+@media print {
+  .topbar, .vdock, .vdock-note, .no-print, .dl-mobile-bar { display: none !important; }
+  .voucher-page { margin: 0 auto !important; }
+}

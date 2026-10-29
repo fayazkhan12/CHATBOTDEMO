@@ -21,7 +21,7 @@ export default function Navbar() {
         {user ? (
           <>
             <button className="btn-ghost" onClick={() => navigate("/dashboard")} data-testid="navbar-profile">
-              <User2 size={14} style={{marginRight: 6, verticalAlign: '-2px'}}/> {user.name?.split(" ")[0] || "Account"}
+              <User2 size={14}/> {user.name?.split(" ")[0] || "Account"}
             </button>
             <button className="btn-ghost" onClick={onLogout} data-testid="navbar-logout" title="Log out">
               <LogOut size={14} />

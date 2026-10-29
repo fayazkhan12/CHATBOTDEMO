@@ -1,8 +1,7 @@
-import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider } from "./lib/auth";
 import Navbar from "./components/Navbar";
-import AIConcierge from "./components/AIConcierge";
 import Home from "./pages/Home";
 import Results from "./pages/Results";
 import Detail from "./pages/Detail";
@@ -15,9 +14,18 @@ import TripShare from "./pages/TripShare";
 import "./App.css";
 import GlobalVoice from "./lib/GlobalVoice";
 
+function NotFound() {
+  const navigate = useNavigate();
+  return (
+    <div className="empty-state not-found" data-testid="not-found-page">
+      <h2>Page not found</h2>
+      <p>This page does not exist or has moved.</p>
+      <button className="btn-primary" onClick={() => navigate("/")} data-testid="not-found-home">Back to home</button>
+    </div>
+  );
+}
+
 function Shell() {
-  const location = useLocation();
-  const isAgentHome = location.pathname === "/";
   return (
     <>
       <Navbar />
@@ -31,8 +39,8 @@ function Shell() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/trip/:shareId" element={<TripShare />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
-      {!isAgentHome && <AIConcierge />}
     </>
   );
 }

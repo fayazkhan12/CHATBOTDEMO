@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useVoiceDock, markVoiceFlow, takeReserveFlow } from "../lib/useVoiceDock";
 import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
 import { ArrowLeft, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
-
-const RUPEE = "\u20b9";
-const money = (n) => RUPEE + Math.round(Number(n) || 0).toLocaleString("en-IN");
+import { money, shortDate, clockTime, dateRange, plural } from "../lib/format";
 
 // hotel ids on the website look like ak-<supplierHotelId>
 function hotelIdOf(item) {
@@ -18,17 +16,12 @@ function hotelIdOf(item) {
   return id.startsWith("ak-") ? id.slice(3) : "";
 }
 
-// "2026-11-10" -> "10 Nov"
-function shortDate(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
-  if (!m) return "";
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
-}
+const TRIP_TITLE = { flight: "Flight details", bus: "Bus details", cab: "Ride details" };
 
 export default function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +32,12 @@ export default function Detail() {
   const [pickedRoom, setPickedRoom] = useState(null);
   const [photo, setPhoto] = useState(0);
   const [brokenPhotos, setBrokenPhotos] = useState({});
+
+  // opened from a shared link or a new tab? then there is no page to go back to
+  const goBack = () => {
+    if (location.key !== "default") navigate(-1);
+    else navigate("/");
+  };
 
   useEffect(() => {
     http.get(`/travel/detail/${encodeURIComponent(id)}`)
@@ -71,6 +70,14 @@ export default function Detail() {
       });
     return () => { stale = true; };
   }, [item]);
+
+  // on a phone the reserve bar sits at the bottom, so the floating mic must sit above it
+  const hasItem = !!item;
+  useEffect(() => {
+    if (!hasItem) return undefined;
+    document.body.classList.add("has-reserve-bar");
+    return () => document.body.classList.remove("has-reserve-bar");
+  }, [hasItem]);
 
   const content = live && live.content ? live.content : null;
   const rooms = live && Array.isArray(live.rooms) ? live.rooms : [];
@@ -145,7 +152,7 @@ export default function Detail() {
     maxTurns: 5,
     onStart: () => ({ say: 'Say "reserve now" to book this one, or "back" to see other options.', listen: true }),
     onText: (said) => {
-      if (isBackIntent(said)) { navigate(-1); return { listen: false }; }
+      if (isBackIntent(said)) { goBack(); return { listen: false }; }
       if (isReserveIntent(said)) { markVoiceFlow(); book(); return { say: "Reserving this for you.", listen: false }; }
       return { say: 'Sorry. Say "reserve now" or "back".', listen: true };
     },
@@ -153,26 +160,54 @@ export default function Detail() {
 
   if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading details&hellip;</div>;
 
-  if (!item) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Option not found. <button className="btn-primary" onClick={() => navigate(-1)} style={{marginTop:14}}>Go back</button></div>;
+  if (!item) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Option not found. <button className="btn-primary" onClick={goBack} style={{marginTop:14}}>Go back</button></div>;
 
-  const isLiveHotel = (item.type || "hotel") === "hotel" && item.mode === "LIVE";
-  const amenities = (content && content.amenities && content.amenities.length)
-    ? content.amenities
-    : (item.amenities || (item.mode === "LIVE" ? [] : ["Breakfast included", "Free cancellation", "24\u00d77 concierge", "Wi-Fi"]));
-  const nights = item.nights || (live && live.nights) || 1;
+  const type = item.type || "hotel";
+  const isHotel = type === "hotel";
+  const isDemo = item.mode !== "LIVE";
+  const isLiveHotel = isHotel && !isDemo;
+
+  const amenities = isHotel
+    ? ((content && content.amenities && content.amenities.length) ? content.amenities : (item.amenities || []))
+    : (item.meta || []);
+  const nights = Number(item.nights) || (live && Number(live.nights)) || 0;
+  const guests = Number(item.guests) || 0;
   const shownPrice = room ? room.price.payable : Math.round(Number(item.price) || 0);
   const hero = photos.length ? photos[Math.min(photo, photos.length - 1)] : null;
-  const stay = item.check_in && item.check_out
-    ? `${shortDate(item.check_in)} - ${shortDate(item.check_out)}`
-    : `${nights} ${nights === 1 ? "night" : "nights"}`;
-  const reserveLabel = booking ? "Preparing\u2026" : liveState === "loading" ? "Loading rooms\u2026" : "Reserve now";
+  const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : "Reserve now";
+  const reserveOff = booking || liveState === "loading" || liveState === "expired";
+
+  const address = (content && content.address) || item.location;
+  const hasGuestRating = !!(content && content.rating && Number(content.rating.value) > 0);
+  const ratingValue = hasGuestRating ? Number(content.rating.value) : Number(item.rating) || 0;
+  const ratingCount = hasGuestRating ? Number(content.rating.count) || 0 : 0;
+
+  // hotels: the stay; flights, buses and cabs: the travel day
+  const tripDay = shortDate(item.check_in || item.departure);
+  const stay = isHotel ? dateRange(item.check_in, item.check_out) : tripDay;
+  const priceNote = isHotel && nights ? `${plural(nights, "night")} total` : "per booking";
+
+  // flight / bus / cab summary
+  const dep = clockTime(item.departure);
+  const arr = clockTime(item.arrival);
+  const stops = item.stops;
+  const stopsLabel = stops === undefined || stops === null ? "" : stops === 0 ? "Non-stop" : plural(Number(stops), "stop");
+  const facts = [["Date", tripDay], ["Cabin", item.cabin], ["Baggage", item.baggage]].filter((f) => f[1]);
+
+  let policy;
+  if (room) policy = `${room.cancellation}. Please check the exact terms before you pay.`;
+  else if (isDemo) policy = "This is a demo listing, so no real cancellation terms apply.";
+  else if ((item.meta || []).includes("Free cancellation")) policy = "The supplier lists free cancellation on this rate. Please check the exact terms before you pay.";
+  else policy = "Cancellation terms depend on the rate you choose. Please check them before you pay.";
+
+  const showNotes = !!content && (!!content.check_in_from || !!content.check_out_by || (content.notes && content.notes.length > 0));
 
   return (
     <div className="detail-page" data-testid="detail-page">
-      <button className="btn-ghost" onClick={() => navigate(-1)} style={{marginBottom:20}} data-testid="back-btn"><ArrowLeft size={14}/> Back</button>
+      <button className="btn-ghost" onClick={goBack} style={{marginBottom:20}} data-testid="back-btn"><ArrowLeft size={14}/> Back</button>
       {hero && (
-        <div className="detail-hero">
-          <img src={hero.url} alt={hero.caption || item.title} onError={() => setBrokenPhotos((b) => ({ ...b, [hero.url]: true }))}/>
+        <div className={isHotel ? "detail-hero" : "detail-hero dl-hero-flat"}>
+          <img src={hero.url} alt={isHotel ? (hero.caption || item.title) : ""} onError={() => setBrokenPhotos((b) => ({ ...b, [hero.url]: true }))}/>
         </div>
       )}
       {photos.length > 1 && (
@@ -193,17 +228,60 @@ export default function Detail() {
       )}
       <div className="detail-grid">
         <div className="detail-body">
-          <span className={item.mode === "LIVE" ? "badge-live" : "badge-demo"}>{item.mode}</span>
+          <span className={isDemo ? "badge-demo" : "badge-live"}>{isDemo ? "DEMO" : "LIVE"}</span>
           <h1 data-testid="detail-title">{item.title}</h1>
           <div className="detail-brand">{item.brand}</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:20,color:'var(--muted)',fontSize:14,marginBottom:20}}>
-            {(content && content.address ? content.address : item.location) && <span><MapPin size={14} style={{marginRight:4,verticalAlign:'-2px'}}/> {content && content.address ? content.address : item.location}</span>}
-            {item.rating && <span><Star size={14} style={{color:'var(--gold)',fill:'var(--gold)',marginRight:4,verticalAlign:'-2px'}}/> {item.rating} rating</span>}
-            {item.duration && <span><Clock3 size={14} style={{marginRight:4,verticalAlign:'-2px'}}/> {item.duration}</span>}
+          <div className="dl-meta">
+            {address && <span><MapPin size={14}/> {address}</span>}
+            {ratingValue > 0 && (
+              <span data-testid="detail-rating">
+                <Star size={14} style={{color:'var(--gold)',fill:'var(--gold)'}}/> {ratingValue} rating
+                {ratingCount > 0 ? ` (${plural(ratingCount, "review")})` : ""}
+              </span>
+            )}
+            {item.duration && <span><Clock3 size={14}/> {item.duration}</span>}
           </div>
-          <p style={{color:'var(--muted)',lineHeight:1.7}} data-testid="detail-about">
-            {content && content.description ? content.description : `${item.title}${item.brand ? ` \u2014 ${item.brand}` : ""}.`}
-          </p>
+
+          {isDemo && (
+            <div className="dl-note dl-demo" role="note" data-testid="demo-note">
+              Demo listing. This is sample data to show how booking works. No real ticket is issued and no real money is charged.
+            </div>
+          )}
+
+          {isHotel && (
+            <p style={{color:'var(--muted)',lineHeight:1.7}} data-testid="detail-about">
+              {content && content.description ? content.description : `${item.title}${item.brand ? ` — ${item.brand}` : ""}.`}
+            </p>
+          )}
+
+          {!isHotel && (
+            <div className="detail-section" data-testid="trip-section">
+              <h3>{TRIP_TITLE[type] || "Trip details"}</h3>
+              <div className="dl-trip">
+                <div className="dl-leg">
+                  <div className="dl-stop">
+                    <strong>{dep || item.origin}</strong>
+                    <span>{dep ? item.origin : "Pickup"}</span>
+                  </div>
+                  <div className="dl-leg-mid" aria-hidden="true">
+                    {item.duration ? <small>{item.duration}</small> : null}
+                    <i/>
+                    {stopsLabel ? <small>{stopsLabel}</small> : null}
+                  </div>
+                  <div className="dl-stop dl-stop-end">
+                    <strong>{arr || item.destination}</strong>
+                    <span>{arr ? item.destination : "Drop"}</span>
+                    {dep && arr && arr < dep ? <em>next day</em> : null}
+                  </div>
+                </div>
+                {facts.length > 0 && (
+                  <dl className="dl-facts">
+                    {facts.map((f) => <div key={f[0]}><dt>{f[0]}</dt><dd>{f[1]}</dd></div>)}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
 
           {isLiveHotel && liveState === "loading" && (
             <div className="detail-section" data-testid="rooms-loading">
@@ -228,7 +306,7 @@ export default function Detail() {
               <div className="dl-rooms" role="radiogroup" aria-label="Room options">
                 {rooms.map((r) => {
                   const on = !!room && r.recommendation_id === room.recommendation_id;
-                  const extras = (r.amenities || []).slice(0, 4).join(" \u00b7 ");
+                  const extras = (r.amenities || []).slice(0, 4).join(" · ");
                   return (
                     <label key={r.recommendation_id} className={`dl-room${on ? " is-on" : ""}`} data-testid="room-option">
                       <input
@@ -255,7 +333,7 @@ export default function Detail() {
                       <span className="dl-room-price">
                         {r.price.before_coupon ? <s>{money(r.price.before_coupon)}</s> : null}
                         <strong>{money(r.price.payable)}</strong>
-                        <small>{nights} {nights === 1 ? "night" : "nights"} total</small>
+                        <small>{plural(nights || 1, "night")} total</small>
                       </span>
                     </label>
                   );
@@ -266,7 +344,7 @@ export default function Detail() {
 
           {amenities.length > 0 && (
             <div className="detail-section">
-              <h3>{content ? "Hotel amenities" : "What's included"}</h3>
+              <h3>{isHotel && content ? "Hotel amenities" : "What's included"}</h3>
               <div className="amen-grid">
                 {amenities.map(a => <span key={a}><Check size={14} style={{color:'var(--teal)'}}/> {a}</span>)}
               </div>
@@ -286,18 +364,13 @@ export default function Detail() {
 
           <div className="detail-section">
             <h3>Cancellation policy</h3>
-            <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6}}>
-              {room
-                ? `${room.cancellation}. Please check the exact terms before you pay.`
-                : (item.meta || []).includes('Free cancellation')
-                  ? 'The supplier lists free cancellation on this rate. Please check the exact terms before you pay.'
-                  : 'Cancellation terms depend on the rate you choose. Please check them before you pay.'}
-            </p>
+            <p style={{color:'var(--muted)',fontSize:13,lineHeight:1.6}} data-testid="detail-policy">{policy}</p>
           </div>
 
-          {content && ((content.notes && content.notes.length > 0) || content.check_out_by) && (
+          {showNotes && (
             <details className="dl-notes" data-testid="hotel-notes">
               <summary>Check-in and hotel notes</summary>
+              {content.check_in_from && <p>Check-in from {content.check_in_from}.</p>}
               {content.check_out_by && <p>Check-out by {content.check_out_by}.</p>}
               {(content.notes || []).map((n) => <p key={n}>{n}</p>)}
             </details>
@@ -310,23 +383,31 @@ export default function Detail() {
           <div style={{color:'var(--muted)',fontSize:12,marginBottom:16}}>Taxes &amp; fees included &middot; {item.currency}</div>
           {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">You save {money(room.price.savings)} (was {money(room.price.before_coupon)})</div> : null}
           {room && <div className="booking-row"><span>Room</span><span className="dl-row-val">{room.name}</span></div>}
-          <div className="booking-row"><span><CalendarDays size={13} style={{marginRight:6,verticalAlign:'-2px'}}/>Stay / Trip</span><span>{stay}</span></div>
-          <div className="booking-row"><span><Users size={13} style={{marginRight:6,verticalAlign:'-2px'}}/>Travellers</span><span>{item.guests || 2} guests</span></div>
-          <div className="booking-row"><span>Service fee</span><span>Included</span></div>
+          {stay ? <div className="booking-row"><span className="dl-row-label"><CalendarDays size={13}/>{isHotel ? "Stay" : "Date"}</span><span>{stay}</span></div> : null}
+          {isHotel && nights > 0 ? <div className="booking-row"><span>Length</span><span>{plural(nights, "night")}</span></div> : null}
+          {guests > 0 ? <div className="booking-row"><span className="dl-row-label"><Users size={13}/>{isHotel ? "Guests" : "Travellers"}</span><span>{guests}</span></div> : null}
           <div className="booking-row"><span>Total</span><span>{money(shownPrice)}</span></div>
           <button
             className="btn-primary"
             style={{width:'100%',padding:'14px',marginTop:16,fontSize:15}}
             onClick={book}
-            disabled={booking || liveState === "loading" || liveState === "expired"}
+            disabled={reserveOff}
             data-testid="book-now-btn"
           >
             {reserveLabel}
           </button>
           <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:10,lineHeight:1.5}}>
-            You won't be charged until the next step. Razorpay-secured.
+            {isDemo ? "Demo listing. No real payment is taken." : "You won't be charged until the next step. Razorpay-secured."}
           </p>
         </aside>
+      </div>
+
+      <div className="dl-mobile-bar" data-testid="mobile-reserve-bar">
+        <div className="dl-mobile-price">
+          <strong>{money(shownPrice)}</strong>
+          <small>{priceNote}</small>
+        </div>
+        <button className="btn-primary" onClick={book} disabled={reserveOff} data-testid="book-now-mobile">{reserveLabel}</button>
       </div>
     </div>
   );

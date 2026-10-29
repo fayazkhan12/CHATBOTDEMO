@@ -507,7 +507,7 @@ def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = Non
         "origin": city, "destination": city,
         "rating": float(review.get("rating") or h.get("starRating") or 0),
         "location": h.get("address") or "",
-        "price": float(price.get("totalPrice") or 0),
+        "price": float(math.floor(float(price.get("totalPrice") or 0) + 0.5)),  # whole rupees, rounded like the room prices
         "currency": price.get("currency") or "INR",
         "image": h.get("heroImage") or first_img or _hotel_image(1, 0),
         "amenities": [f.get("name") for f in (h.get("facilities") or []) if f.get("name")][:5],
@@ -904,6 +904,9 @@ async def travel_search(req: SearchRequest, request: Request):
             mode = "LIVE"
     if not results and req.service != "hotels":
         results = _mock_results(req)
+        for r in results:  # the details and payment pages show these
+            r["guests"] = req.travellers
+            r["check_in"] = req.start_date
     if req.budget is not None:
         trimmed = [r for r in results if r["price"] <= req.budget]
         results = trimmed if (trimmed or req.service == "hotels") else results
@@ -1137,6 +1140,31 @@ def _check_traveller(t) -> None:
         raise HTTPException(status_code=422, detail=problem)
 
 
+_BOOKING_REUSE_HOURS = 2
+
+
+def _is_demo_item(item_id: Any) -> bool:
+    """Flights, buses and cabs (ids fl-, bu-, ca-) are sample data. Hotels (ak-) are real.
+    Decided from the id, which the signed price covers, never from what the browser sends."""
+    return str(item_id or "")[:3] in ("fl-", "bu-", "ca-")
+
+
+async def _razorpay_order(booking_id: str, amount: int, service: str) -> Optional[Dict[str, Any]]:
+    if not razorpay_client:
+        return None
+    try:
+        return await asyncio.to_thread(razorpay_client.order.create, {
+            "amount": amount * 100,
+            "currency": "INR",
+            "receipt": booking_id,
+            "notes": {"booking_id": booking_id, "service": service},
+            "payment_capture": 1,
+        })
+    except Exception as exc:
+        logger.warning("Razorpay order create failed: %s", exc)
+        return None
+
+
 @api.post("/bookings")
 async def create_booking(body: BookingIn, user=Depends(optional_user)):
     _check_traveller(body.traveller)
@@ -1144,40 +1172,61 @@ async def create_booking(body: BookingIn, user=Depends(optional_user)):
     amount = _price_from_token((body.item or {}).get("price_token"), item_id) if item_id else None
     if amount is None:
         raise HTTPException(status_code=409, detail="This price has expired. Please search again.")
+    demo = _is_demo_item(item_id)
     safe_item = _safe_item(body.item) or {"id": item_id}
     safe_item["price"] = amount
+    safe_item["mode"] = "DEMO" if demo else "LIVE"
     traveller = {str(k)[:40]: str(v)[:200] for k, v in list((body.traveller or {}).items())[:12]}
-    booking_id = f"DW{uuid.uuid4().hex[:10].upper()}"
-    doc = {
-        "booking_id": booking_id,
-        "user_id": user["user_id"] if user else None,
-        "service": body.service, "item": safe_item, "traveller": traveller,
-        "amount_rupees": amount, "currency": "INR",
-        "status": "pending_payment",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    razorpay_order = None
-    if razorpay_client:
+    user_id = user["user_id"] if user else None
+    # A sample ticket never goes through a live Razorpay key, so nobody can be charged for it.
+    use_razorpay = razorpay_client is not None and (not demo or RAZORPAY_KEY_ID.startswith("rzp_test_"))
+
+    # The details page and the payment page both call this. The same person opening the same
+    # offer again continues the unpaid booking instead of starting a second one.
+    existing = None
+    if user_id:
         try:
-            order = razorpay_client.order.create({
-                "amount": amount * 100,
-                "currency": "INR",
-                "receipt": booking_id,
-                "notes": {"booking_id": booking_id, "service": body.service},
-                "payment_capture": 1,
-            })
-            doc["razorpay_order_id"] = order["id"]
-            razorpay_order = order
-        except Exception as exc:
-            logger.warning("Razorpay order create failed: %s", exc)
-    await db.bookings.insert_one(dict(doc))
-    doc.pop("_id", None)
+            since = (datetime.now(timezone.utc) - timedelta(hours=_BOOKING_REUSE_HOURS)).isoformat()
+            existing = await db.bookings.find_one(
+                {"user_id": user_id, "status": "pending_payment", "item.id": item_id,
+                 "amount_rupees": amount, "created_at": {"$gte": since}},
+                {"_id": 0},
+                sort=[("created_at", -1)],
+            )
+        except Exception as exc:  # only a convenience; a new booking is always safe
+            logger.warning("booking reuse lookup skipped: %s", type(exc).__name__)
+
+    if existing:
+        booking_id = existing["booking_id"]
+        order_id = existing.get("razorpay_order_id") if use_razorpay else None
+        changes: Dict[str, Any] = {"traveller": {**(existing.get("traveller") or {}), **traveller}}
+        if use_razorpay and not order_id:
+            order = await _razorpay_order(booking_id, amount, body.service)
+            if order:
+                order_id = order["id"]
+                changes["razorpay_order_id"] = order_id
+        await db.bookings.update_one({"booking_id": booking_id}, {"$set": changes})
+    else:
+        booking_id = f"DW{uuid.uuid4().hex[:10].upper()}"
+        order = await _razorpay_order(booking_id, amount, body.service) if use_razorpay else None
+        order_id = order["id"] if order else None
+        doc = {
+            "booking_id": booking_id,
+            "user_id": user_id,
+            "service": body.service, "item": safe_item, "traveller": traveller,
+            "amount_rupees": amount, "currency": "INR",
+            "status": "pending_payment",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if order_id:
+            doc["razorpay_order_id"] = order_id
+        await db.bookings.insert_one(dict(doc))
     return {
         "booking_id": booking_id,
         "amount_rupees": amount,
-        "razorpay_order_id": razorpay_order["id"] if razorpay_order else None,
-        "razorpay_key_id": RAZORPAY_KEY_ID if razorpay_order else None,
-        "mode": "LIVE" if razorpay_order else "DEMO",
+        "razorpay_order_id": order_id,
+        "razorpay_key_id": RAZORPAY_KEY_ID if order_id else None,
+        "mode": "LIVE" if order_id else "DEMO",
     }
 
 
@@ -1207,13 +1256,20 @@ async def verify_booking(body: VerifyIn):
 
 
 @api.post("/bookings/demo-confirm")
-async def demo_confirm(body: Dict[str, str]):
-    # Anyone could confirm a booking without paying, so this exists only outside production.
-    if IS_PROD:
-        raise HTTPException(status_code=404, detail="Not found")
+async def demo_confirm(body: Dict[str, str], user=Depends(optional_user)):
     booking_id = str(body.get("booking_id") or "")[:40]
     if not booking_id:
         raise HTTPException(status_code=400, detail="booking_id required")
+    booking = await db.bookings.find_one({"booking_id": booking_id}, {"_id": 0})
+    owner = booking.get("user_id") if booking else None
+    if not booking or (owner and (not user or user.get("user_id") != owner)):
+        raise HTTPException(status_code=404, detail="Booking not found")
+    # Nothing is paid here. In production only sample bookings (flights, buses, cabs) may use it,
+    # so a real hotel can never be confirmed without paying.
+    if IS_PROD and not _is_demo_item((booking.get("item") or {}).get("id")):
+        raise HTTPException(status_code=404, detail="Not found")
+    if booking.get("status") in ("confirmed", "paid"):
+        return {"status": booking["status"], "booking_id": booking_id}
     await db.bookings.update_one(
         {"booking_id": booking_id},
         {"$set": {"status": "confirmed_demo", "confirmed_at": datetime.now(timezone.utc).isoformat()}},

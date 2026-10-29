@@ -104,11 +104,11 @@ const MessageBubble = ({ msg, onOpenCard, onMore }) => (
             <article key={card.id} className="inline-card" onClick={() => onOpenCard(card)} data-testid={`inline-card-${card.id}`}>
               <img src={card.image} alt={card.title}/>
               <div className="inline-body">
-                <span className="inline-type">{card.type}</span>
+                <span className="inline-type">{card.type}{card.mode !== "LIVE" && <em className="demo-chip">Demo</em>}</span>
                 <h4>{card.title}</h4>
                 <small>{card.brand}</small>
                 <div className="inline-footer">
-                  <strong>₹{Number(card.price).toLocaleString("en-IN")}</strong>
+                  <strong>₹{Math.round(Number(card.price) || 0).toLocaleString("en-IN")}</strong>
                   <button className="inline-cta" data-testid={`inline-book-${card.id}`}>View <ArrowRight size={12}/></button>
                 </div>
               </div>

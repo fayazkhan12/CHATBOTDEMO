@@ -5,7 +5,7 @@ import { isHomeIntent, isBookingsIntent, isLoginIntent } from "./voicecmd";
 import { createPageGuide } from "./pageform";
 
 // Paths found in App.js when this was installed.
-const PATHS = {"home": "/", "bookings": null, "login": "/login"};
+const PATHS = {"home": "/", "bookings": "/dashboard", "login": "/login"};
 
 const BACK_RE = /\b(go back|back|wapas|vapas|peeche)\b/;
 
