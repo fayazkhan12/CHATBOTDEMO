@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, Clock3, Download, Copy } from "lucide-react";
+import { CheckCircle2, Clock3, Download, Copy, Car } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { money, tripLine } from "../lib/format";
+import { noteSelection, selectionFromItem } from "../lib/chatstore";
+import { rideUrl } from "../lib/rides";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 const LABEL = { color: "var(--muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" };
@@ -18,6 +20,13 @@ export default function BookingConfirm() {
     http.get(`/bookings/${bookingId}`).then(({ data }) => setBooking(data)).catch(() => {}).finally(() => setLoading(false));
   }, [bookingId]);
 
+  // the chat remembers the stay that was booked ("a cab to my hotel")
+  useEffect(() => {
+    if (!booking) return;
+    const done = ["confirmed", "paid", "confirmed_demo"].includes(booking.status);
+    noteSelection(selectionFromItem(booking.item, done ? "booked" : "viewed", booking.booking_id));
+  }, [booking]);
+
   if (loading) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading voucher&hellip;</div>;
   if (!booking) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}>Booking not found.</div>;
 
@@ -30,6 +39,8 @@ export default function BookingConfirm() {
     : item.title;
   const when = tripLine(item);
   const isHotel = (item.type || booking.service) === "hotel";
+  const sel = isHotel ? selectionFromItem(item, "booked", booking.booking_id) : null;
+  const hotelPlace = sel ? { name: sel.lat ? sel.name : [sel.name, sel.city].filter(Boolean).join(", "), lat: sel.lat, lng: sel.lng } : null;
 
   const copyId = async () => {
     try {
@@ -78,6 +89,9 @@ export default function BookingConfirm() {
           {!confirmed && <button className="btn-primary" onClick={() => navigate(`/checkout/${booking.booking_id}`)} data-testid="complete-payment-btn">Complete payment</button>}
           <button className={confirmed ? "btn-primary" : "btn-ghost"} onClick={() => window.print()} data-testid="print-btn"><Download size={14}/> Print voucher</button>
           <button className="btn-ghost" onClick={copyId} data-testid="share-btn"><Copy size={14}/> Copy booking ID</button>
+          {confirmed && isHotel && hotelPlace && (
+            <button className="btn-ghost" onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel"><Car size={14}/> Book a ride to your hotel</button>
+          )}
           <button className="btn-ghost" onClick={() => navigate("/dashboard")} data-testid="dashboard-btn">My bookings</button>
         </div>
       </div>

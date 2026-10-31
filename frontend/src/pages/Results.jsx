@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import SearchBar from "../components/SearchBar";
 import ResultCard from "../components/ResultCard";
 import { http } from "../lib/api";
 import { money, shortDate, dateRange, plural, dayFromNow } from "../lib/format";
+import { rideUrl } from "../lib/rides";
 
 const NOUN = { hotels: ["hotel", "hotels"], flights: ["flight", "flights"], buses: ["bus", "buses"], cabs: ["cab", "cabs"] };
 
@@ -45,6 +46,7 @@ export default function Results() {
   }, [initial, service, startDate, endDate]);
 
   useEffect(() => {
+    if (service === "cabs") return undefined;       // cabs, autos and bikes have their own screen (see below)
     let stale = false;
     setLoading(true);
     setError("");
@@ -59,7 +61,7 @@ export default function Results() {
       .catch((e) => { if (!stale) setError(searchError(e)); })
       .finally(() => { if (!stale) setLoading(false); });
     return () => { stale = true; };
-  }, [body, attempt]);
+  }, [body, attempt, service]);
 
   const showMore = async () => {
     if (loadingMore) return;
@@ -129,6 +131,11 @@ export default function Results() {
     if (day) parts.push(day);
     return parts.join(" · ");
   })();
+
+  // an old link to the cab search lands on the ride screen with the places already filled in
+  if (service === "cabs") {
+    return <Navigate replace to={rideUrl({ pickup: initial.origin ? { name: initial.origin } : null, drop: initial.destination ? { name: initial.destination } : null, vehicle: "cab" })} />;
+  }
 
   return (
     <>

@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plane, Hotel, BusFront, Car, MapPin, CalendarDays, Users, Search } from "lucide-react";
+import { Plane, Hotel, BusFront, Car, MapPin, CalendarDays, Users, Search, Clock } from "lucide-react";
 import DestinationInput from "./DestinationInput";
+import PlaceInput from "./PlaceInput";
+import { boxLimits, boxToWhen, rideUrl, whenToBox } from "../lib/rides";
 import { dayFromNow, addDays } from "../lib/format";
 
 const SERVICES = [
   { id: "flights", label: "Flights", icon: Plane },
   { id: "hotels", label: "Hotels", icon: Hotel },
   { id: "buses", label: "Buses", icon: BusFront },
-  { id: "cabs", label: "Cabs", icon: Car },
+  { id: "cabs", label: "Rides", icon: Car },
 ];
 
 const MAX_NIGHTS = 30;
@@ -43,6 +45,11 @@ export default function SearchBar({ initial = {}, onSubmit }) {
   const [endDate, setEndDate] = useState(initial.end_date || dayFromNow(3));
   const [travellers, setTravellers] = useState(Number(initial.travellers) || 2);
   const hotel = service === "hotels";
+  const ride = service === "cabs";
+  // rides: bike, auto and cab have their own screen; this tab only collects the two places and the time
+  const [pickup, setPickup] = useState(null);
+  const [drop, setDrop] = useState(null);
+  const [rideWhen, setRideWhen] = useState("now");
   const counts = [1, 2, 3, 4, 5, 6];
   if (!counts.includes(travellers)) counts.push(travellers);
 
@@ -53,6 +60,11 @@ export default function SearchBar({ initial = {}, onSubmit }) {
   };
 
   const submit = () => {
+    if (ride) {
+      if (!pickup || !drop) { toast.error(!pickup ? "Please choose the pickup place." : "Please choose where you want to go."); return; }
+      navigate(rideUrl({ pickup, drop, when: rideWhen }));
+      return;
+    }
     const problem = formProblem({ service, origin, destination, startDate, endDate });
     if (problem) {
       toast.error(problem);
@@ -97,7 +109,35 @@ export default function SearchBar({ initial = {}, onSubmit }) {
           </button>
         ))}
       </div>
-      <div className={hotel ? "search-fields is-hotel" : "search-fields"} onKeyDown={onKeyDown}>
+      {ride && (
+        <div className="search-fields is-ride" data-testid="ride-search-fields">
+          <div className="field">
+            <PlaceInput label="Pickup" tone="pickup" value={pickup} onChange={setPickup} allowCurrent placeholder="Pickup place" testid="ride-pickup-input" />
+          </div>
+          <div className="field">
+            <PlaceInput label="Drop" tone="drop" value={drop} onChange={setDrop} near={pickup} placeholder="Where to?" testid="ride-drop-input" />
+          </div>
+          <div className="field">
+            <div className="field-label"><Clock size={11}/> When</div>
+            <div className="field-input">
+              <select value={rideWhen === "now" ? "now" : "later"} onChange={(e) => {
+                if (e.target.value === "now") { setRideWhen("now"); return; }
+                const d = new Date(Date.now() + 60 * 60000); d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
+                const p = (n) => String(n).padStart(2, "0");
+                setRideWhen(boxToWhen(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`));
+              }} aria-label="When" data-testid="ride-when-select">
+                <option value="now">Now</option>
+                <option value="later">Schedule</option>
+              </select>
+              {rideWhen !== "now" && (
+                <input type="datetime-local" min={boxLimits().min} max={boxLimits().max} value={whenToBox(rideWhen)} onChange={(e) => e.target.value && setRideWhen(boxToWhen(e.target.value))} aria-label="Pickup time" data-testid="ride-when-input" />
+              )}
+            </div>
+          </div>
+          <button className="search-submit" onClick={submit} data-testid="search-submit"><Search size={18}/> See fares</button>
+        </div>
+      )}
+      <div className={hotel ? "search-fields is-hotel" : "search-fields"} onKeyDown={onKeyDown} hidden={ride}>
         {!hotel && (
           <div className="field">
             <div className="field-label"><MapPin size={11}/> From</div>

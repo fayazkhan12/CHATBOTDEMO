@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plane, Hotel, BusFront, Car } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plane, Hotel, BusFront, Car, Zap } from "lucide-react";
+import VehicleIcon from "../components/VehicleIcon";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { money, tripLine } from "../lib/format";
+import { rideApi, STAGE_TITLE, whenText } from "../lib/rides";
 
 const icons = { flights: Plane, hotels: Hotel, buses: BusFront, cabs: Car, flight: Plane, hotel: Hotel, bus: BusFront, cab: Car };
 
@@ -41,7 +43,10 @@ const bookedOn = (iso) => {
 export default function Dashboard() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState("bookings");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(["bookings", "rides", "trips", "profile"].includes(params.get("tab")) ? params.get("tab") : "bookings");
+  const [rides, setRides] = useState([]);
+  const [ridesState, setRidesState] = useState("loading");
   const [bookings, setBookings] = useState([]);
   const [bookingsState, setBookingsState] = useState("loading"); // loading | ready | failed
   const [trips, setTrips] = useState([]);
@@ -53,6 +58,7 @@ export default function Dashboard() {
       .then(({ data }) => { setBookings(data.bookings || []); setBookingsState("ready"); })
       .catch(() => setBookingsState("failed"));
     http.get("/me/trips").then(({ data }) => setTrips(data.trips || [])).catch(() => {});
+    rideApi.list().then((r) => { setRides(r); setRidesState("ready"); }).catch(() => setRidesState("failed"));
   }, [user, loading, navigate]);
 
   if (loading || !user) return <div className="empty-state" style={{maxWidth:600,margin:'80px auto'}}><span className="spinner"/> Loading your trips&hellip;</div>;
@@ -69,6 +75,7 @@ export default function Dashboard() {
       </div>
       <div className="dash-tabs">
         <button className={tab === "bookings" ? "active" : ""} onClick={() => setTab("bookings")} data-testid="tab-bookings">Bookings ({shown.length})</button>
+        <button className={tab === "rides" ? "active" : ""} onClick={() => setTab("rides")} data-testid="tab-rides">Rides ({rides.length})</button>
         <button className={tab === "trips" ? "active" : ""} onClick={() => setTab("trips")} data-testid="tab-trips">Saved trips ({trips.length})</button>
         <button className={tab === "profile" ? "active" : ""} onClick={() => setTab("profile")} data-testid="tab-profile">Profile</button>
       </div>
@@ -102,6 +109,37 @@ export default function Dashboard() {
                   {open
                     ? <button className="btn-primary" onClick={() => navigate(`/checkout/${b.booking_id}`)} data-testid={`continue-${b.booking_id}`}>Continue</button>
                     : <button className="btn-ghost" onClick={() => navigate(`/booking/${b.booking_id}`)} data-testid={`voucher-${b.booking_id}`}>View</button>}
+                </div>
+              </div>
+            );
+          })
+        )
+      )}
+
+      {tab === "rides" && (
+        ridesState === "loading" ? (
+          <div className="empty-state"><span className="spinner"/> Loading your rides&hellip;</div>
+        ) : ridesState === "failed" ? (
+          <div className="empty-state" data-testid="rides-failed">Could not load your rides right now. Please refresh the page.</div>
+        ) : rides.length === 0 ? (
+          <div className="empty-state" data-testid="rides-empty">No rides yet. <br/><button className="btn-primary" style={{marginTop:14}} onClick={() => navigate("/rides")}>Book a ride</button></div>
+        ) : (
+          rides.map((r) => {
+            const stage = r.state.stage;
+            const live = stage !== "completed" && stage !== "cancelled";
+            return (
+              <div key={r.ride_id} className="booking-card" data-testid={`ride-${r.ride_id}`}>
+                <div style={{display:'flex',gap:16,alignItems:'center'}}>
+                  <div style={{width:48,height:48,background:'rgba(232,130,12,0.1)',color:'var(--teal)',borderRadius:12,display:'grid',placeItems:'center',flexShrink:0}}><VehicleIcon kind={r.vehicle.key} size={24}/></div>
+                  <div style={{minWidth:0}}>
+                    <strong>{r.pickup.name} &rarr; {r.drop.name}</strong>
+                    <div style={{color:'var(--muted)',fontSize:13}}>{r.vehicle.name} &middot; {r.distance_km} km &middot; {r.scheduled_for ? whenText(r.scheduled_for) : bookedOn(r.created_at)}</div>
+                    <small>Ride &middot; {r.ride_id} &middot; {money(r.fare)} <span className="badge-demo" style={{marginLeft:6}}>DEMO</span></small>
+                  </div>
+                </div>
+                <div className="booking-actions">
+                  <span className={`booking-status ride-${stage}`}>{live && stage !== "scheduled" ? <><Zap size={12}/> {STAGE_TITLE[stage]}</> : STAGE_TITLE[stage]}</span>
+                  <button className={live ? "btn-primary" : "btn-ghost"} onClick={() => navigate(live || stage === "cancelled" ? `/ride/${r.ride_id}` : `/ride/${r.ride_id}/receipt`)} data-testid={`ride-open-${r.ride_id}`}>{live ? "Track" : stage === "cancelled" ? "View" : "Receipt"}</button>
                 </div>
               </div>
             );

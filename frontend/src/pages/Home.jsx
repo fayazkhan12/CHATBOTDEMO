@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pickDefaultLang, saveLang } from "../lib/voice";
 import { resolvePick, hasPickIntent, isStrongReserve } from "../lib/voicecmd";
-import { guardReply } from "../lib/guard";
 import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
-import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight } from "lucide-react";
-import { API, http } from "../lib/api";
+import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight, RotateCcw, Bike, MapPin } from "lucide-react";
+import { toast } from "sonner";
+import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
+import { rideUrl } from "../lib/rides";
 
 // --- voice helpers ---
 function pickBestVoice(script) {
@@ -40,19 +42,6 @@ function speak(text, { onEnd } = {}) {
   window.speechSynthesis.speak(u);
 }
 
-// Parse <search>{...}</search> block out of the streamed reply
-function extractSearchIntent(text) {
-  const match = text.match(/<search>\s*([\s\S]*?)\s*<\/search>/i);
-  if (!match) return { clean: text, intent: null };
-  try {
-    const intent = JSON.parse(match[1]);
-    const clean = text.replace(match[0], "").trim();
-    return { clean, intent };
-  } catch {
-    return { clean: text.replace(match[0], "").trim(), intent: null };
-  }
-}
-
 // Labels under the result cards, in the language the user wrote in
 const LABELS = {
   en: {
@@ -75,21 +64,64 @@ const LABELS = {
   },
 };
 
-function detectUiLang(text) {
-  const t = text || "";
-  if (/[\u0900-\u097F]/.test(t)) return "hi";
-  if (/\b(hai|hain|chahiye|chahie|dikhao|dikha|mujhe|kya|nahi|karo|batao|mein|wala|wale|liye|kaise|kitna|aur|bhi)\b/i.test(t)) return "hinglish";
-  return "en";
-}
+// What the chat says under its reply while a search is running, and when the search finds nothing
+const SEARCH_LABELS = {
+  en: {
+    wait: (service) => (service === "hotels" ? "Checking live hotel prices. This can take up to a minute." : "Finding the best options..."),
+    none: "No options found for these dates and place. Try other dates or another city.",
+  },
+  hinglish: {
+    wait: (service) => (service === "hotels" ? "Live hotel prices check ho rahe hain. Ek minute tak lag sakta hai." : "Sabse achhe options dhoondh rahe hain..."),
+    none: "In dates aur jagah ke liye koi option nahi mila. Doosri date ya doosra shehar try karo.",
+  },
+  hi: {
+    wait: (service) => (service === "hotels" ? "\u0932\u093e\u0907\u0935 \u0939\u094b\u091f\u0932 \u0915\u0940 \u0915\u0940\u092e\u0924\u0947\u0902 \u0926\u0947\u0916\u0940 \u091c\u093e \u0930\u0939\u0940 \u0939\u0948\u0902\u0964 \u090f\u0915 \u092e\u093f\u0928\u091f \u0924\u0915 \u0932\u0917 \u0938\u0915\u0924\u093e \u0939\u0948\u0964" : "\u0938\u092c\u0938\u0947 \u0905\u091a\u094d\u091b\u0947 \u0935\u093f\u0915\u0932\u094d\u092a \u0922\u0942\u0901\u0922 \u0930\u0939\u0947 \u0939\u0948\u0902..."),
+    none: "\u0907\u0928 \u0924\u093e\u0930\u0940\u0916\u094b\u0902 \u0914\u0930 \u091c\u0917\u0939 \u0915\u0947 \u0932\u093f\u090f \u0915\u094b\u0908 \u0935\u093f\u0915\u0932\u094d\u092a \u0928\u0939\u0940\u0902 \u092e\u093f\u0932\u093e\u0964 \u0926\u0942\u0938\u0930\u0940 \u0924\u093e\u0930\u0940\u0916 \u092f\u093e \u0926\u0942\u0938\u0930\u093e \u0936\u0939\u0930 \u0906\u091c\u093c\u092e\u093e\u090f\u0901\u0964",
+  },
+};
 
 const QUICK_STARTERS = [
   { label: "Hotels in Jaipur", icon: Hotel },
   { label: "Delhi to Goa flight", icon: Plane },
   { label: "Mumbai to Pune bus", icon: BusFront },
+  { label: "Bike ride in Jaipur", icon: Bike },
   { label: "Airport cab Bangalore", icon: Car },
 ];
 
-const MessageBubble = ({ msg, onOpenCard, onMore }) => (
+const INR = (n) => `₹${Math.round(Number(n) || 0).toLocaleString("en-IN")}`;
+
+// The fares for a ride the visitor asked for in the chat. Tapping a vehicle opens the ride screen with it chosen.
+function RideQuote({ ride, onOpen }) {
+  const shown = ride.options.filter((o) => o.available);
+  const wanted = ride.vehicle && ride.vehicle !== "any" ? ride.vehicle : "";
+  const list = (wanted
+    ? shown.filter((o) => (wanted === "cab" ? ["mini", "sedan", "suv"].includes(o.key) : o.key === wanted))
+    : shown
+  ).slice(0, 5);
+  const rows = list.length ? list : shown.slice(0, 5);
+  return (
+    <div className="ride-quote" data-testid="chat-ride-quote">
+      <div className="ride-quote-route">
+        <MapPin size={14} />
+        <span title={ride.pickup.name}>{ride.pickup.name}</span>
+        <ArrowRight size={13} />
+        <span title={ride.drop.name}>{ride.drop.name}</span>
+      </div>
+      <small className="ride-quote-meta">{ride.distance_km} km · about {ride.duration_min} min{ride.surge ? ` · ${ride.surge.label}` : ""}{ride.when && ride.when !== "now" ? " · scheduled" : ""}</small>
+      {rows.length === 0 && <small>No vehicle is available for this trip. Try a closer drop place.</small>}
+      {rows.map((o) => (
+        <button key={o.key} className="ride-quote-row" onClick={() => onOpen(o.key)} data-testid={`chat-ride-${o.key}`}>
+          <span className="ride-quote-name">{o.name}<small>{o.eta_min} min away · {o.seats} seat{o.seats > 1 ? "s" : ""}</small></span>
+          <strong>{INR(o.fare)}</strong>
+        </button>
+      ))}
+      <small className="ride-quote-note">Demo ride: no real driver is sent.</small>
+      <button className="inline-cta" onClick={() => onOpen(wanted && rows[0] ? rows[0].key : "")} data-testid="chat-ride-open">Choose and book <ArrowRight size={12} /></button>
+    </div>
+  );
+}
+
+const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
   <div className={`chat-row ${msg.role}`} data-testid={`chat-row-${msg.role}`}>
     <div className="chat-avatar-lg">
       {msg.role === "assistant" ? <Sparkles size={16} /> : <span>You</span>}
@@ -98,6 +130,30 @@ const MessageBubble = ({ msg, onOpenCard, onMore }) => (
       <div className="chat-bubble-lg">
         {msg.text || <span className="typing-dots"><i/><i/><i/></span>}
       </div>
+      {msg.searching && (
+        <div className="chat-status" role="status" data-testid="chat-searching">
+          <span className="typing-dots"><i/><i/><i/></span>
+          <small>{(SEARCH_LABELS[msg.lang] || SEARCH_LABELS.en).wait(msg.searching)}</small>
+        </div>
+      )}
+      {msg.interrupted && !msg.searching && !msg.cards?.length && !msg.ride && (
+        <div className="chat-status" data-testid="chat-interrupted">
+          <small>This search was interrupted.</small>
+          <button className="inline-cta" onClick={() => onRetry(msg)} data-testid="chat-search-again"><RotateCcw size={12}/> Search again</button>
+        </div>
+      )}
+      {msg.cardsDropped && !msg.cards?.length && msg.search && (
+        <div className="chat-status" data-testid="chat-cards-dropped">
+          <small>Old results are not stored. </small>
+          <button className="inline-cta" onClick={() => onRetry(msg)}><RotateCcw size={12}/> Show again</button>
+        </div>
+      )}
+      {msg.noResults && (
+        <div className="chat-status" data-testid="chat-no-results">
+          <small>{msg.note || (SEARCH_LABELS[msg.lang] || SEARCH_LABELS.en).none}</small>
+        </div>
+      )}
+      {msg.ride && <RideQuote ride={msg.ride} onOpen={(vehicle) => onOpenRide(msg.ride, vehicle)} />}
       {msg.cards?.length > 0 && (
         <div className="inline-cards">
           {msg.cards.slice(0, msg.visible || 3).map(card => (
@@ -140,82 +196,51 @@ const MessageBubble = ({ msg, onOpenCard, onMore }) => (
 
 export default function Home() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [messages, setMessages] = useState([
-    { id: "greet", role: "assistant", text: "Hi! I am DestinoWay, your travel concierge. Hotels, flights, buses or cabs: what do you need? You can talk to me in any language." },
-  ]);
+  const { user, loading: authLoading } = useAuth();
+  const chat = useChat();
+  const messages = chat.messages;
+  const sending = chat.sending;
   const [text, setText] = useState("");
   const [listening, setListening] = useState(false);
   const [speakingReply, setSpeakingReply] = useState(false);
   const [voiceOutput, setVoiceOutput] = useState(true);
-  const [sending, setSending] = useState(false);
   const endRef = useRef(null);
+  const firstScroll = useRef(true);
   const voiceModeRef = useRef(false); // true for current send if invoked via mic
-  const historyRef = useRef([]); // mirrors conversation for backend
+  const openCardRef = useRef(null);
 
-  // keep history in sync with messages
+  // the chat belongs to one person: a different account (or logging out) starts a clean chat.
+  // Wait until we know who is logged in, or a reload would look like a logout.
   useEffect(() => {
-    historyRef.current = messages
-      .filter((m) => m.text && m.id !== "greet")
-      .map((m) => ({ role: m.role, text: m.text }));
-  }, [messages]);
+    if (authLoading) return;
+    setOwner(user ? (user.user_id || user.email || "user") : "guest");
+  }, [user, authLoading]);
 
   // warm up voices list on mount
   useEffect(() => { window.speechSynthesis?.getVoices(); }, []);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: firstScroll.current ? "auto" : "smooth" });
+    firstScroll.current = false;
+  }, [messages]);
 
   const openCard = (card) => {
     http.post("/travel/cache", [card]).catch(() => {});
     const service = card.type === "flight" ? "flights" : card.type === "hotel" ? "hotels" : card.type === "bus" ? "buses" : "cabs";
+    noteSelection(selectionFromItem(card, "viewed"));
     navigate(`/detail/${service}/${encodeURIComponent(card.id)}`);
   };
 
-  const runSearch = async (intent, replyId) => {
-    try {
-      const body = {
-        service: intent.service,
-        origin: intent.origin || "Delhi",
-        destination: intent.destination,
-        ...(intent.destination_id ? { destination_id: intent.destination_id } : {}),
-        start_date: intent.start_date,
-        end_date: intent.end_date || intent.start_date,
-        travellers: Number(intent.travellers || 2),
-        ...(intent.budget_tier ? { budget_tier: intent.budget_tier } : {}),
-        ...(intent.budget ? { budget: Number(intent.budget) } : {}),
-      };
-      const { data } = await http.post("/travel/search", body);
-      await http.post("/travel/cache", data.results).catch(() => {});
-      setMessages((prev) => prev.map((m) => m.id === replyId ? {
-        ...m, cards: data.results, visible: 3, total: data.total || 0,
-        page: data.page || 1, hasMore: !!data.has_more, searchBody: body,
-        lang: detectUiLang([...historyRef.current].reverse().find((h) => h.role === "user")?.text),
-      } : m));
-    } catch (e) {
-      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "assistant", text: "Search failed. Please try again in a moment." }]);
-    }
-  };
+  openCardRef.current = openCard;
 
-  const loadMore = async (msg) => {
-    if (msg.loadingMore) return;
-    const hidden = (msg.cards?.length || 0) - (msg.visible || 3);
-    if (hidden > 0) {
-      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, visible: (m.visible || 3) + 6 } : m));
-      return;
-    }
-    if (!msg.hasMore || !msg.searchBody) return;
-    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, loadingMore: true } : m));
-    try {
-      const { data } = await http.post("/travel/search", { ...msg.searchBody, page: (msg.page || 1) + 1 });
-      await http.post("/travel/cache", data.results).catch(() => {});
-      setMessages((prev) => prev.map((m) => {
-        if (m.id !== msg.id) return m;
-        const seen = new Set(m.cards.map((c) => c.id));
-        const fresh = data.results.filter((c) => !seen.has(c.id));
-        const all = [...m.cards, ...fresh];
-        return { ...m, cards: all, visible: all.length, page: data.page || (m.page || 1) + 1, hasMore: !!data.has_more && fresh.length > 0, loadingMore: false };
-      }));
-    } catch (e) {
-      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, loadingMore: false } : m));
+  const openRide = (ride, vehicle) => navigate(rideUrl({ pickup: ride.pickup, drop: ride.drop, vehicle, when: ride.when }));
+
+  const loadMore = (msg) => storeLoadMore(msg.id);
+  const retry = (msg) => retrySearch(msg.id);
+
+  const newChat = () => {
+    window.speechSynthesis?.cancel();
+    if (clearChat()) {
+      toast("New chat started", { action: { label: "Undo", onClick: () => undoClear() }, duration: 6000 });
     }
   };
 
@@ -224,63 +249,13 @@ export default function Home() {
     if (!t || sending) return;
     voiceModeRef.current = fromVoice;
     setText("");
-    setSending(true);
-
-    const userId = `u-${Date.now()}`;
-    const replyId = `a-${Date.now() + 1}`;
-    const userMsg = { id: userId, role: "user", text: t };
-    const placeholder = { id: replyId, role: "assistant", text: "", streaming: true };
-    setMessages((old) => [...old, userMsg, placeholder]);
-
-    let answer = "";
-    try {
-      const resp = await fetch(`${API}/chat/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: t,
-          language: "auto",
-          history: historyRef.current.slice(-10),
-          context: { user: user?.name || null },
-        }),
-      });
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop();
-        for (const chunk of chunks) {
-          const line = chunk.split("\n").find((x) => x.startsWith("data: "));
-          if (!line) continue;
-          try {
-            const ev = JSON.parse(line.slice(6));
-            if (ev.text) {
-              answer += ev.text;
-              const clean = guardReply(extractSearchIntent(answer).clean);
-              setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: clean } : m));
-            }
-          } catch { /* ignore */ }
-        }
-      }
-    } catch {
-      answer = "Cannot reach the concierge right now. Please try again shortly.";
-      setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: answer } : m));
-    } finally {
-      setSending(false);
+    const out = await sendMessage(t, { userName: user?.name || null });
+    if (out && out.pick) {          // "open the second one", typed
+      openCardRef.current(out.pick);
+      voiceModeRef.current = false;
+      return;
     }
-
-    const { clean: rawClean, intent } = extractSearchIntent(answer);
-    const clean = guardReply(rawClean);
-    setMessages((old) => old.map((m) => m.id === replyId ? { ...m, text: clean } : m));
-
-    if (intent?.service && intent?.destination) {
-      await runSearch(intent, replyId);
-    }
-
+    const clean = out ? out.clean : "";
     if (voiceModeRef.current && voiceOutput && clean) {
       setSpeakingReply(true);
       speak(clean, { onEnd: () => setSpeakingReply(false) });
@@ -302,10 +277,7 @@ export default function Home() {
   sendingRef.current = sending;
   chatActiveRef.current = messages.length > 1;
   const lastCardsRef = useRef([]);
-  const openCardRef = useRef(null);
-  openCardRef.current = openCard;
-  const lastCardMsg = [...messages].reverse().find((m) => m.cards && m.cards.length);
-  lastCardsRef.current = lastCardMsg ? lastCardMsg.cards.slice(0, lastCardMsg.visible || 3) : [];
+  lastCardsRef.current = visibleCards(messages);
 
   const onVoiceFinal = useCallback((said) => {
     if (!shouldSendUtterance(said, chatActiveRef.current)) {
@@ -397,6 +369,11 @@ export default function Home() {
           </div>
         </div>
         <div className="agent-actions">
+          {messages.length > 1 && (
+            <button className="icon-btn" onClick={newChat} title="Start a new chat" data-testid="new-chat">
+              <RotateCcw size={15}/> <span className="new-chat-label">New chat</span>
+            </button>
+          )}
           <button
             className={voiceOutput ? "icon-btn primary" : "icon-btn"}
             title={voiceOutput ? "Voice reply on" : "Voice reply off"}
@@ -413,7 +390,7 @@ export default function Home() {
 
       <div className="agent-messages" data-testid="agent-messages">
         {messages.map((m) => (
-          <MessageBubble key={m.id} msg={m} onOpenCard={openCard} onMore={loadMore}/>
+          <MessageBubble key={m.id} msg={m} onOpenCard={openCard} onMore={loadMore} onOpenRide={openRide} onRetry={retry}/>
         ))}
         <div ref={endRef}/>
       </div>

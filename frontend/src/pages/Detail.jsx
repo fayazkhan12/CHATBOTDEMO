@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useVoiceDock, markVoiceFlow, takeReserveFlow } from "../lib/useVoiceDock";
 import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
-import { ArrowLeft, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
+import { ArrowLeft, Car, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { noteSelection, selectionFromItem } from "../lib/chatstore";
+import { rideUrl } from "../lib/rides";
 import { money, shortDate, clockTime, dateRange, plural } from "../lib/format";
 
 // hotel ids on the website look like ak-<supplierHotelId>
@@ -45,6 +47,9 @@ export default function Detail() {
       .catch(() => toast.error("This option is no longer available. Please search again."))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // the chat remembers which hotel the visitor is looking at ("which one is nearest to the airport?", "a cab to my hotel")
+  useEffect(() => { if (item) noteSelection(selectionFromItem(item, "viewed")); }, [item]);
 
   useEffect(() => {
     if (!item) return undefined;
@@ -178,6 +183,9 @@ export default function Detail() {
   const reserveOff = booking || liveState === "loading" || liveState === "expired";
 
   const address = (content && content.address) || item.location;
+  // where a ride to this hotel should end (the hotel's own coordinates when the supplier gave them)
+  const hotelSel = isHotel ? selectionFromItem(item, "viewed") : null;
+  const hotelPlace = hotelSel ? { name: hotelSel.lat ? hotelSel.name : [hotelSel.name, hotelSel.city].filter(Boolean).join(", "), lat: hotelSel.lat, lng: hotelSel.lng } : null;
   const hasGuestRating = !!(content && content.rating && Number(content.rating.value) > 0);
   const ratingValue = hasGuestRating ? Number(content.rating.value) : Number(item.rating) || 0;
   const ratingCount = hasGuestRating ? Number(content.rating.count) || 0 : 0;
@@ -399,6 +407,11 @@ export default function Detail() {
           <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:10,lineHeight:1.5}}>
             {isDemo ? "Demo listing. No real payment is taken." : "You won't be charged until the next step. Razorpay-secured."}
           </p>
+          {isHotel && (
+            <button className="btn-ghost detail-ride-cta" style={{width:'100%',marginTop:12}} onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel">
+              <Car size={14}/> Book a ride to this hotel
+            </button>
+          )}
         </aside>
       </div>
 

@@ -10,6 +10,11 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import BookingConfirm from "./pages/BookingConfirm";
 import TripShare from "./pages/TripShare";
+import Rides from "./pages/Rides";
+import RideTrack from "./pages/RideTrack";
+import RideReceipt from "./pages/RideReceipt";
+import RideShare from "./pages/RideShare";
+import ActiveRideBar from "./components/ActiveRideBar";
 import "./App.css";
 import GlobalVoice from "./lib/GlobalVoice";
 
@@ -28,6 +33,7 @@ function Shell() {
   return (
     <>
       <Navbar />
+      <ActiveRideBar />
       <GlobalVoice />
       <Routes>
         <Route path="/" element={<Home />} />
@@ -38,6 +44,10 @@ function Shell() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/trip/:shareId" element={<TripShare />} />
+        <Route path="/rides" element={<Rides />} />
+        <Route path="/ride/share/:token" element={<RideShare />} />
+        <Route path="/ride/:id" element={<RideTrack />} />
+        <Route path="/ride/:id/receipt" element={<RideReceipt />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>
