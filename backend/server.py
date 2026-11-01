@@ -33,7 +33,7 @@ from google.genai import types as genai_types
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from starlette.middleware.cors import CORSMiddleware
 
 try:
@@ -191,8 +191,10 @@ class SearchRequest(BaseModel):
     destination_id: Optional[str] = Field(None, max_length=40)
     start_date: str = "2026-05-18"
     end_date: str = "2026-05-22"
-    travellers: int = Field(2, ge=1, le=10)
+    travellers: int = Field(2, ge=1, le=10)     # hotels: the adults (children are counted in `children`)
     rooms: int = Field(1, ge=1, le=5)
+    children: int = Field(0, ge=0, le=6)        # hotels only
+    child_ages: List[int] = Field(default_factory=list, max_length=6)   # hotels only: one age (0-17) per child
     budget: Optional[float] = Field(None, gt=0, le=10_000_000)  # max total price in INR
     budget_tier: Optional[Literal["low", "medium", "high"]] = None
     area: Optional[str] = Field(None, max_length=80)  # neighbourhood / landmark / station inside the city
@@ -205,6 +207,22 @@ class SearchRequest(BaseModel):
     def _valid_date(cls, v: str) -> str:
         datetime.strptime(v, "%Y-%m-%d")
         return v
+
+    @field_validator("child_ages")
+    @classmethod
+    def _valid_ages(cls, v: List[int]) -> List[int]:
+        if any(a < 0 or a > 17 for a in v):
+            raise ValueError("A child's age must be between 0 and 17.")
+        return v
+
+    @model_validator(mode="after")
+    def _valid_rooms(self) -> "SearchRequest":
+        if self.service == "hotels":
+            if self.travellers < self.rooms:
+                raise ValueError("Every room needs at least one adult.")
+            if len(self.child_ages) != self.children:
+                raise ValueError("Please give the age of each child.")
+        return self
 
 
 class ChatRequest(BaseModel):
@@ -303,54 +321,44 @@ def _seed(text: str) -> int:
     return int(hashlib.sha1(text.encode()).hexdigest()[:8], 16)
 
 
-def _hotel_image(seed: int, i: int) -> str:
-    pool = [
-        "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=900&q=80",
-        "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=900&q=80",
-        "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=900&q=80",
-        "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=900&q=80",
-        "https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?auto=format&fit=crop&w=900&q=80",
-        "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&w=900&q=80",
-    ]
-    return pool[(seed + i) % len(pool)]
-
-
 def _mock_results(req: SearchRequest) -> List[Dict[str, Any]]:
     city = req.destination.title()
     origin = req.origin.title()
     seed = _seed(f"{req.service}:{origin}:{city}:{req.start_date}")
+    # Sample data only: there is no real flight, bus or cab supplier behind these. The names are made up on purpose
+    # (never a real airline or bus brand), and every card is marked DEMO / "Sample price" in the app.
     if req.service == "flights":
-        names = [("IndiGo", "6E"), ("Air India", "AI"), ("Vistara", "UK"), ("SpiceJet", "SG"), ("Emirates", "EK")]
+        names = [("Sample Air", "SA"), ("Demo Airways", "DA"), ("Example Jet", "EJ"), ("Test Express", "TE"), ("Sample Sky", "SS")]
         photos = ["1569154941061-e231b4725ef1", "1436491865332-7a61a109cc05", "1540962351504-03099e0a754b",
                   "1483540716030-f99f85b19dcd", "1540339832862-474599807836"]
         return [{
-            "id": f"fl-{seed}-{i}", "type": "flight", "provider": "DestinoWay Marketplace", "mode": "DEMO",
+            "id": f"fl-{seed}-{i}", "type": "flight", "provider": "Sample data", "mode": "DEMO",
             "title": f"{code} {100 + i * 47}", "brand": brand, "origin": origin, "destination": city,
             "departure": f"{req.start_date}T{6 + i * 2:02d}:20:00", "arrival": f"{req.start_date}T{10 + i * 3:02d}:05:00",
             "duration": f"{3 + i}h 45m", "stops": 0 if i < 2 else 1,
             "price": 4290 + ((seed >> i) % 7) * 780, "currency": "INR",
             "cabin": "Economy", "baggage": "15 kg + 7 kg cabin",
             "image": f"https://images.unsplash.com/photo-{photos[i % 5]}?auto=format&fit=crop&w=900&q=80",
-            "meta": ["Cabin bag", "Free changes" if i % 2 == 0 else "15 kg check-in"],
+            "meta": ["Cabin bag", "15 kg check-in"],
         } for i, (brand, code) in enumerate(names)]
     if req.service == "buses":
-        names = ["IntrCity SmartBus", "Zingbus Executive", "Volvo Multi-Axle", "Neeta Travels", "VRL Luxury Sleeper"]
+        names = ["Sample Sleeper", "Demo Executive", "Sample Multi-Axle", "Example Travels", "Demo Luxury Sleeper"]
         next_day = (date.fromisoformat(req.start_date) + timedelta(days=1)).isoformat()  # a night bus arrives the next morning
         return [{
-            "id": f"bu-{seed}-{i}", "type": "bus", "provider": "DestinoWay Marketplace", "mode": "DEMO",
-            "title": names[i], "brand": "AC sleeper - live tracking", "origin": origin, "destination": city,
+            "id": f"bu-{seed}-{i}", "type": "bus", "provider": "Sample data", "mode": "DEMO",
+            "title": names[i], "brand": "AC sleeper (sample)", "origin": origin, "destination": city,
             "departure": f"{req.start_date}T{18 + i:02d}:00:00", "arrival": f"{next_day}T{7 + i:02d}:30:00",
             "duration": "13h 30m", "stops": 2, "price": 980 + i * 260, "currency": "INR",
             "image": "https://images.unsplash.com/photo-1612144431180-2d672779556c?auto=format&fit=crop&w=900&q=80",
-            "meta": ["Charging point", "Blanket included", "Live tracking"],
+            "meta": ["Charging point", "Blanket included"],
         } for i in range(5)]
-    names = ["Airport Transfer", "BluSmart Executive", "Savaari Outstation", "KTC Premium Cab", "Luxe Chauffeur"]
+    names = ["Airport Transfer (sample)", "Executive Sedan (sample)", "Outstation Cab (sample)", "Premium Cab (sample)", "Chauffeur Drive (sample)"]
     return [{
-        "id": f"ca-{seed}-{i}", "type": "cab", "provider": "DestinoWay Marketplace", "mode": "DEMO",
-        "title": names[i], "brand": "Sedan - meet & greet", "origin": origin, "destination": city,
+        "id": f"ca-{seed}-{i}", "type": "cab", "provider": "Sample data", "mode": "DEMO",
+        "title": names[i], "brand": "Sedan (sample)", "origin": origin, "destination": city,
         "duration": f"{35 + i * 8} min", "price": 899 + i * 340, "currency": "INR",
         "image": "https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&w=900&q=80",
-        "meta": ["Toll included", "Free wait 45 min", "Child seat on request"],
+        "meta": ["Sample fare"],
     } for i in range(5)]
 
 
@@ -491,33 +499,57 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
     return pool[start:start + PAGE_SIZE], len(pool)
 
 
+def _guest_review(review: Any) -> Tuple[float, int]:
+    """(guest rating out of 5, number of reviews) exactly as the supplier gives them; (0.0, 0) when there is none.
+    The star class of a hotel (1-5 stars) is NOT a guest rating and is never used here."""
+    review = review if isinstance(review, dict) else {}
+    try:
+        rating = float(review.get("rating") or 0)
+    except (TypeError, ValueError):
+        rating = 0.0
+    try:
+        count = int(review.get("count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    return (round(rating, 1), max(0, count)) if 0 < rating <= 5 else (0.0, 0)
+
+
 def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = None, area: Optional[str] = None) -> Dict[str, Any]:
     price = h.get("price") or {}
-    review = h.get("userReview") or {}
     imgs = h.get("images") or []
     first_img = (imgs[0].get("url") if imgs and isinstance(imgs[0], dict) else imgs[0] if imgs else None)
+    rating, review_count = _guest_review(h.get("userReview"))
     meta: List[str] = []
     if distance_km is not None and area:
         meta.append(f"{distance_km:.1f} km from {area}")
+    kind = re.sub(r"(?<!^)(?=[A-Z])", " ", str(h.get("propertyType") or "")).strip().capitalize()   # "GuestHouse" -> "Guest house"
+    if kind and kind.lower() != "hotel":
+        meta.append(kind)
     if h.get("freeCancellation"):
         meta.append("Free cancellation")
     if h.get("freeBreakfast"):
         meta.append("Breakfast included")
     if h.get("payAtHotel"):
         meta.append("Pay at hotel")
+    try:
+        stars = int(float(h.get("starRating") or 0))
+    except (TypeError, ValueError):
+        stars = 0
     card = {
         "id": f"ak-{h.get('supplierHotelId')}",
         "type": "hotel", "provider": "Akbar", "mode": "LIVE",
         "title": h.get("name") or "Hotel",
         "brand": f"{city} - {h.get('starRating')} star" if h.get("starRating") else city,
         "origin": city, "destination": city,
-        "rating": float(review.get("rating") or h.get("starRating") or 0),
+        "stars": stars if 0 < stars <= 5 else 0,
+        "rating": rating,                 # the guests' rating only; 0 when the hotel has none (no star rating shown as a rating)
+        "review_count": review_count,
         "location": h.get("address") or "",
         "price": float(math.floor(float(price.get("totalPrice") or 0) + 0.5)),  # whole rupees, rounded like the room prices
         "currency": price.get("currency") or "INR",
-        "image": h.get("heroImage") or first_img or _hotel_image(1, 0),
+        "image": h.get("heroImage") or first_img or "",   # no photo from the supplier: the app shows a plain placeholder, never a stock photo
         "amenities": [f.get("name") for f in (h.get("facilities") or []) if f.get("name")][:5],
-        "meta": meta or ["Live inventory"],
+        "meta": meta,
     }
     if distance_km is not None:
         card["distance_km"] = round(distance_km, 2)
@@ -529,6 +561,19 @@ def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = Non
     except (KeyError, TypeError, ValueError):
         pass
     return card
+
+
+def _room_plan(req: SearchRequest) -> List[Dict[str, Any]]:
+    """The rooms of a hotel search: `req.rooms` rooms, the adults and the children shared out evenly (every room has at least
+    one adult). The same split must be used when the guests are named later, so it lives in one place."""
+    rooms = max(1, min(req.rooms, req.travellers))
+    base, extra = divmod(req.travellers, rooms)
+    plan: List[Dict[str, Any]] = [{"adults": base + (1 if i < extra else 0), "children": 0, "childAges": []} for i in range(rooms)]
+    for k, age in enumerate(req.child_ages[:req.children]):
+        room = plan[k % rooms]
+        room["children"] += 1
+        room["childAges"].append(int(age))
+    return plan
 
 
 async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
@@ -551,9 +596,10 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             "geoCode": geo,
             "checkIn": req.start_date,
             "checkOut": req.end_date,
-            "rooms": [{"adults": req.travellers, "children": 0, "childAges": []}],
+            "rooms": _room_plan(req),
             "nationality": req.nationality,
             "destinationCountryCode": str((pick or {}).get("country") or "IN")[:2],
+            "currency": "INR",   # otherwise the company server guesses the currency from the caller's IP address
         }
 
         sid = ""
@@ -563,7 +609,10 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             if r.status_code != 200:
                 logger.warning("Hotel search start non-200: %s %s", r.status_code, r.text[:200])
                 return None
-            msg = r.json().get("message")
+            started = r.json()
+            msg = started.get("message")   # the company API puts the search id in `message` (and a text in `data`); accept either place
+            if not isinstance(msg, dict):
+                msg = started.get("data")
             sid = msg.get("searchId") if isinstance(msg, dict) else ""
             if not sid:
                 logger.warning("No searchId in response")
@@ -628,7 +677,9 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             card["search_id"] = sid
             card["hotel_id"] = str(card["id"])[3:]
             card["check_in"], card["check_out"] = req.start_date, req.end_date
-            card["nights"], card["guests"] = nights, req.travellers
+            card["nights"] = nights
+            card["adults"], card["children"], card["rooms"] = req.travellers, req.children, min(req.rooms, req.travellers)
+            card["guests"] = req.travellers + req.children
         return {"items": out, "total": total, "page": page}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
@@ -638,7 +689,13 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 # ---------- routes: health & auth ----------
 @api.get("/")
 async def root():
-    return {"message": "DestinoWay API", "version": "2.2", "razorpay_configured": bool(razorpay_client)}
+    key = RAZORPAY_KEY_ID if razorpay_client else ""
+    return {
+        "message": "DestinoWay API", "version": "2.2", "razorpay_configured": bool(razorpay_client),
+        # which kind of Razorpay key is set (never the key itself), and whether a hotel booking made here is real
+        "razorpay_mode": "test" if key.startswith("rzp_test_") else "live" if key.startswith("rzp_live_") else "off",
+        "hotel_bookings": "live" if REAL_HOTEL_BOOKINGS else "demo",
+    }
 
 
 @api.post("/auth/signup")
@@ -876,7 +933,7 @@ async def travel_search(req: SearchRequest, request: Request):
     if req.sort == "price":
         results.sort(key=lambda r: r["price"])
     elif req.sort == "rating" and req.service == "hotels":
-        results.sort(key=lambda r: -r.get("rating", 0))
+        results.sort(key=lambda r: (-r.get("rating", 0), -r.get("review_count", 0)))   # guest rating first, then the more reviewed hotel
     note = None
     if req.service == "hotels" and not results:
         note = (
@@ -949,7 +1006,8 @@ _ITEM_KEYS = [
     "id", "type", "provider", "mode", "title", "brand", "origin", "destination", "rating", "location",
     "price", "currency", "image", "amenities", "meta", "departure", "arrival", "duration", "stops",
     "cabin", "baggage", "nights", "price_token",
-    "search_id", "hotel_id", "check_in", "check_out", "guests",
+    "search_id", "hotel_id", "check_in", "check_out", "guests", "adults", "children", "rooms",
+    "stars", "review_count",
     "recommendation_id", "room_name", "cancellation", "board",
     "lat", "lng",
 ]
@@ -994,24 +1052,77 @@ async def cache_items(items: List[Dict[str, Any]], request: Request):
     return {"ok": True, "count": saved}
 
 
-# ---------- featured content ----------
+# ---------- featured content: the company's own home-page content (nothing is invented here) ----------
+_FEATURED_TTL = 600            # seconds a good answer is reused
+_FEATURED_RETRY = 60           # seconds before asking again after a failure
+_FEATURED_SKIP = {"indiadd"}   # a test category that exists in the dev data
+_FEATURED_CACHE: Dict[str, Any] = {"until": 0.0, "data": None}
+
+
+def _featured_text(v: Any, limit: int) -> str:
+    return " ".join(str(v or "").split())[:limit]
+
+
+def _featured_image(v: Any) -> str:
+    s = str(v or "").strip()
+    return s if s.startswith("https://") and len(s) < 500 else ""
+
+
+def _featured_from_homecontent(body: Any) -> Dict[str, Any]:
+    """Destinations and top-rated hotels out of the company `GET /api/v1/homecontent` answer. Items without a photo are left out,
+    and so are destinations without a city id (the id is what a hotel search needs)."""
+    body = body if isinstance(body, dict) else {}
+    data = next((body[k] for k in ("data", "message") if isinstance(body.get(k), dict)), body)
+    destinations: List[Dict[str, Any]] = []
+    seen: set = set()
+    for cat in ((data.get("popularDestinations") or {}).get("categories") or []):
+        if not isinstance(cat, dict) or _featured_text(cat.get("category"), 60).casefold() in _FEATURED_SKIP:
+            continue
+        for it in (cat.get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            city_id = _featured_text(it.get("cityId"), 40)
+            image = _featured_image(it.get("image"))
+            name = _featured_text(it.get("city") or it.get("name"), 60)
+            if not (city_id and image and len(name) >= 2) or city_id in seen:
+                continue
+            seen.add(city_id)
+            destinations.append({"city": name, "name": _featured_text(it.get("name"), 80), "image": image, "alt": _featured_text(it.get("alt"), 120),
+                                 "destination_id": city_id, "category": _featured_text(cat.get("category"), 60)})
+    top_hotels: List[Dict[str, Any]] = []
+    for it in ((data.get("topRatedHotels") or {}).get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        image, name = _featured_image(it.get("image")), _featured_text(it.get("name"), 80)
+        if not (image and name):
+            continue
+        try:
+            rating = round(float(it.get("rating") or 0), 1)
+        except (TypeError, ValueError):
+            rating = 0.0
+        top_hotels.append({"name": name, "city": _featured_text(it.get("city"), 60), "destination_id": _featured_text(it.get("cityId"), 40),
+                           "hotel_id": _featured_text(it.get("hotelId"), 40), "image": image,
+                           "rating": rating if 0 < rating <= 5 else 0.0, "description": _featured_text(it.get("description"), 200)})
+    return {"source": "company", "destinations": destinations[:12], "top_hotels": top_hotels[:12]}
+
+
 @api.get("/featured/destinations")
 async def featured():
-    return {
-        "destinations": [
-            {"city": "Goa", "country": "India", "tag": "Beaches", "image": "https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?auto=format&fit=crop&w=900&q=80", "from_price": 4299},
-            {"city": "Udaipur", "country": "Rajasthan", "tag": "Heritage", "image": "https://images.unsplash.com/photo-1599661046289-e31897846e41?auto=format&fit=crop&w=900&q=80", "from_price": 5899},
-            {"city": "Male", "country": "Maldives", "tag": "Island luxury", "image": "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?auto=format&fit=crop&w=900&q=80", "from_price": 28999},
-            {"city": "Dubai", "country": "UAE", "tag": "Skyline", "image": "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=900&q=80", "from_price": 18499},
-            {"city": "Manali", "country": "Himachal", "tag": "Mountain", "image": "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?auto=format&fit=crop&w=900&q=80", "from_price": 3899},
-            {"city": "Bali", "country": "Indonesia", "tag": "Tropical", "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=900&q=80", "from_price": 24999},
-        ],
-        "collections": [
-            {"title": "Honeymoon in Himalayas", "image": "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?auto=format&fit=crop&w=900&q=80", "nights": 5, "price": 42000},
-            {"title": "Rajasthan Palace Trail", "image": "https://images.unsplash.com/photo-1599661046289-e31897846e41?auto=format&fit=crop&w=900&q=80", "nights": 7, "price": 68000},
-            {"title": "Maldives Overwater Villas", "image": "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?auto=format&fit=crop&w=900&q=80", "nights": 4, "price": 155000},
-        ],
-    }
+    now = time.time()
+    if _FEATURED_CACHE["data"] is not None and _FEATURED_CACHE["until"] > now:
+        return _FEATURED_CACHE["data"]
+    result: Dict[str, Any] = {"source": "unavailable", "destinations": [], "top_hotels": []}   # company server not reachable: nothing, never made-up places
+    ttl = _FEATURED_RETRY
+    if AKBAR_HOST:
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(f"{AKBAR_HOST}/api/v1/homecontent")
+            if r.status_code == 200:
+                result, ttl = _featured_from_homecontent(r.json()), _FEATURED_TTL
+        except Exception as exc:
+            logger.warning("home content unavailable: %s: %r", type(exc).__name__, exc)
+    _FEATURED_CACHE["data"], _FEATURED_CACHE["until"] = result, now + ttl
+    return result
 
 
 # ---------- trips ----------
@@ -1107,10 +1218,29 @@ def _check_traveller(t) -> None:
 _BOOKING_REUSE_HOURS = 2
 
 
+# Hotel rooms and prices in this app are LIVE (company hotel API), but a booking made here is NOT sent to the hotel supplier:
+# the company's itinerary + payment flow is not connected yet. So, for now, every booking is a DEMO booking. It is saved here,
+# no hotel is booked and no real money is taken. Switch this on only together with the real booking flow.
+REAL_HOTEL_BOOKINGS = False
+
+
 def _is_demo_item(item_id: Any) -> bool:
-    """Flights, buses and cabs (ids fl-, bu-, ca-) are sample data. Hotels (ak-) are real.
+    """True when a booking for this offer is not a real reservation. Flights, buses and cabs (ids fl-, bu-, ca-) are sample data.
+    Hotels (ak-) are live offers, but their booking stays a demo until REAL_HOTEL_BOOKINGS is on.
     Decided from the id, which the signed price covers, never from what the browser sends."""
-    return str(item_id or "")[:3] in ("fl-", "bu-", "ca-")
+    if str(item_id or "")[:3] in ("fl-", "bu-", "ca-"):
+        return True
+    return not REAL_HOTEL_BOOKINGS
+
+
+def _present_booking(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """A saved booking as the app shows it. While hotel bookings are not real, an older record that was saved as LIVE is shown as a demo too:
+    it never reached a hotel."""
+    if doc and not REAL_HOTEL_BOOKINGS:
+        item = dict(doc.get("item") or {})
+        item["mode"] = "DEMO"
+        doc = {**doc, "item": item}
+    return doc
 
 
 async def _razorpay_order(booking_id: str, amount: int, service: str) -> Optional[Dict[str, Any]]:
@@ -1142,7 +1272,8 @@ async def create_booking(body: BookingIn, user=Depends(optional_user)):
     safe_item["mode"] = "DEMO" if demo else "LIVE"
     traveller = {str(k)[:40]: str(v)[:200] for k, v in list((body.traveller or {}).items())[:12]}
     user_id = user["user_id"] if user else None
-    # A sample ticket never goes through a live Razorpay key, so nobody can be charged for it.
+    # A demo booking never goes through a live Razorpay key, so nobody can be charged for something that is not booked.
+    # With a test key the Razorpay checkout runs in test mode (test cards only, no real money).
     use_razorpay = razorpay_client is not None and (not demo or RAZORPAY_KEY_ID.startswith("rzp_test_"))
 
     # The details page and the payment page both call this. The same person opening the same
@@ -1190,7 +1321,8 @@ async def create_booking(body: BookingIn, user=Depends(optional_user)):
         "amount_rupees": amount,
         "razorpay_order_id": order_id,
         "razorpay_key_id": RAZORPAY_KEY_ID if order_id else None,
-        "mode": "LIVE" if order_id else "DEMO",
+        "mode": "DEMO" if demo else "LIVE",           # is this a real reservation? (see REAL_HOTEL_BOOKINGS)
+        "payment": "test" if order_id else "none",    # a Razorpay test-mode checkout, or no payment step at all
     }
 
 
@@ -1228,8 +1360,8 @@ async def demo_confirm(body: Dict[str, str], user=Depends(optional_user)):
     owner = booking.get("user_id") if booking else None
     if not booking or (owner and (not user or user.get("user_id") != owner)):
         raise HTTPException(status_code=404, detail="Booking not found")
-    # Nothing is paid here. In production only sample bookings (flights, buses, cabs) may use it,
-    # so a real hotel can never be confirmed without paying.
+    # Nothing is paid here. Only a demo booking may use it, so once real hotel bookings are switched on
+    # (REAL_HOTEL_BOOKINGS) a real hotel can never be confirmed without paying.
     if IS_PROD and not _is_demo_item((booking.get("item") or {}).get("id")):
         raise HTTPException(status_code=404, detail="Not found")
     if booking.get("status") in ("confirmed", "paid"):
@@ -1246,13 +1378,13 @@ async def get_booking(booking_id: str, user=Depends(current_user)):
     booking = await db.bookings.find_one({"booking_id": str(booking_id)[:40], "user_id": user["user_id"]}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    return booking
+    return _present_booking(booking)
 
 
 @api.get("/me/bookings")
 async def my_bookings(user=Depends(current_user)):
     bookings = await db.bookings.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return {"bookings": bookings}
+    return {"bookings": [_present_booking(b) for b in bookings]}
 
 
 @api.post("/payments/webhook")
@@ -1294,6 +1426,7 @@ _REFUSAL_TEXT = {
     "no_ride_places": "ask_places", "same_place": "same_place", "bad_place": "bad_place", "past_time": "past_time", "far_time": "far_time",
     "city_not_found": "city_not_found", "past_date": "past_date", "no_date": "ask_date", "no_nights": "ask_nights",
     "too_long": "bad_nights", "bad_travellers": "bad_travellers",
+    "child_ages": "ask_child_ages", "bad_rooms": "bad_rooms",
 }
 
 
@@ -1379,6 +1512,29 @@ def _fix_ride_block(raw: Dict[str, Any], today: Optional[date] = None) -> Tuple[
     return {"service": "rides", "pickup": pickup, "drop": drop, "vehicle": vehicle, "when": when}, "ok"
 
 
+def _occupancy_problem(raw: Dict[str, Any], adults: int) -> str:
+    """Why the rooms / children of a hotel block cannot be searched, as a refusal reason ("" when they are fine).
+    `travellers` is the number of adults; every child needs an age."""
+    if raw.get("rooms") not in (None, ""):
+        try:
+            rooms = int(float(raw.get("rooms")))
+        except (TypeError, ValueError, OverflowError):
+            return "bad_rooms"
+        if not 1 <= rooms <= min(5, adults):
+            return "bad_rooms"
+    if raw.get("children") not in (None, "") or raw.get("child_ages"):
+        try:
+            kids = int(float(raw.get("children") or 0))
+            ages = [int(float(a)) for a in (raw.get("child_ages") or [])]
+        except (TypeError, ValueError, OverflowError):
+            return "child_ages"
+        if kids == 0 and not ages:
+            return ""                       # "children": 0
+        if not 1 <= kids <= 6 or len(ages) != kids or any(not 0 <= a <= 17 for a in ages):
+            return "child_ages"
+    return ""
+
+
 def _stay_nights(trip: Dict[str, Any]) -> int:
     a, b = _parse_day(trip.get("start_date")), _parse_day(trip.get("end_date"))
     return (b - a).days if (a and b and b > a) else 0
@@ -1416,6 +1572,11 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         for key in ("start_date", "end_date", "travellers"):
             if raw.get(key) in (None, "") and trip.get(key) is not None:
                 raw[key] = trip[key]
+        if service == "hotels":      # the same rooms and children as the search before, unless the visitor changed them ("children": 0 = none now)
+            if raw.get("rooms") in (None, "") and trip.get("rooms") is not None:
+                raw["rooms"] = trip["rooms"]
+            if raw.get("children") in (None, "") and not raw.get("child_ages") and trip.get("children") is not None:
+                raw["children"], raw["child_ages"] = trip["children"], trip.get("child_ages")
         moved = _parse_day(raw.get("start_date")) if (gave_start and not gave_end) else None
         if moved and moved != _parse_day(trip.get("start_date")) and _stay_nights(trip):
             raw["end_date"] = (moved + timedelta(days=_stay_nights(trip))).isoformat()    # only the first day moved: the stay keeps its length
@@ -1461,6 +1622,10 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
     block: Dict[str, Any] = {"service": service, "destination": dest, "start_date": start.isoformat(),
                              "end_date": end.isoformat(), "travellers": travellers}
     if service == "hotels":
+        problem = _occupancy_problem(raw, travellers)
+        if problem:
+            return None, problem            # rooms / children the search cannot do: the visitor is asked, nothing is guessed
+        block.update(cmem.occupancy(raw))
         city = await _resolve_city(dest)
         if not city:
             return None, "city_not_found"
@@ -1621,7 +1786,11 @@ SYSTEM_PROMPT = (
     "end_date = start_date + nights. A range like '3 to 5 Nov' or 'aaj se 2 din' already gives it, so do not ask again. Treat 'N days' as N nights.\n"
     "10. DATES: a date that has already passed is not accepted: say it has passed and ask for another one. A day and month without a year means its next upcoming occurrence "
     "(if that day passed only a few days ago, it has passed). Write dates in the block as YYYY-MM-DD.\n"
-    "11. LIMITS: one search covers 1 to 10 travellers and 1 to 30 nights. If the visitor asks for more, say so in one short line and ask again.\n\n"
+    "11. LIMITS: one search covers 1 to 10 travellers and 1 to 30 nights. If the visitor asks for more, say so in one short line and ask again.\n"
+    "12. ROOMS AND CHILDREN (hotels only, optional): travellers means the ADULTS. If the visitor says how many rooms they want, add \"rooms\":N to the block (1 to 5, never more rooms than adults). "
+    "If children are travelling, add \"children\":N and \"child_ages\":[the age of each child in years, 0 for under one] and do NOT count the children in travellers. "
+    "If a child's age is not known, ask ONE short question for the ages before searching. Never ask about rooms or children unless the visitor mentioned them. "
+    "Example: '2 adults and a 6 year old, 2 rooms' -> \"travellers\":2,\"rooms\":2,\"children\":1,\"child_ages\":[6]. Leave these keys out when there is no such request.\n\n"
     "SEARCH TRIGGER - IMPORTANT:\n"
     "Once you have ALL required pieces (for hotels: service, destination, start_date, end_date, travellers, budget_tier; for flights/buses: service, origin, destination, start_date, end_date, travellers; for rides: service, pickup, drop), "
     "END your reply with EXACTLY this JSON block on a new line and NOTHING after it:\n"
@@ -1652,7 +1821,8 @@ BOOKING_RULES = (
     "\n\nBOOKING RULES - STRICT: In this chat you can only search and advise. You can NOT book, hold, reserve or confirm anything, take payment, or create booking or reference numbers. "
     "NEVER say a booking is done, confirmed or reserved, and never write a reference number. "
     "NEVER ask for the user's name, phone number or email, and never ask whether to proceed with a booking. "
-    "When the user picks a hotel or says they want to book, reply in their language with ONE short line: tap View on that option, then Reserve now, and they pay on the secure payment page. "
+    "When the user picks a hotel or says they want to book, reply in their language with ONE short line: tap View on that option, then Reserve now, and they continue on the checkout page. "
+    "If the user asks whether a booking here is real, or whether they will be charged, answer honestly in ONE short line: bookings made on this site are a demo for now, the rooms and prices are live, but nothing is sent to the hotel and no real money is charged. "
     "If the user only says yes, ok, haan or hn, ask what they want next for the trip; do not invent a next step."
 )
 

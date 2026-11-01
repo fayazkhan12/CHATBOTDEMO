@@ -90,6 +90,15 @@ function RideQuote({ ride, onOpen }) {
   );
 }
 
+// The photo of a result card in the chat. A card without a photo (or with one that does not load) shows a plain placeholder.
+const CARD_ICON = { hotel: Hotel, flight: Plane, bus: BusFront, cab: Car };
+function CardPhoto({ card }) {
+  const [broken, setBroken] = useState(false);
+  const Icon = CARD_ICON[card.type] || Hotel;
+  if (!card.image || broken) return <div className="inline-photo-none" aria-hidden="true"><Icon size={30}/></div>;
+  return <img src={card.image} alt={card.title} onError={() => setBroken(true)}/>;
+}
+
 const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
   <div className={`chat-row ${msg.role}`} data-testid={`chat-row-${msg.role}`}>
     <div className="chat-avatar-lg">
@@ -127,7 +136,7 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
         <div className="inline-cards">
           {msg.cards.slice(0, msg.visible || 3).map(card => (
             <article key={card.id} className="inline-card" onClick={() => onOpenCard(card)} data-testid={`inline-card-${card.id}`}>
-              <img src={card.image} alt={card.title}/>
+              <CardPhoto card={card}/>
               <div className="inline-body">
                 <span className="inline-type">{card.type}{card.mode !== "LIVE" && <em className="demo-chip">Demo</em>}</span>
                 <h4>{card.title}</h4>

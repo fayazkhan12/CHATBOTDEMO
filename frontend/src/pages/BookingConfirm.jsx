@@ -57,12 +57,14 @@ export default function BookingConfirm() {
         <div style={{width:72,height:72,margin:'0 auto 20px',borderRadius:'50%',background:confirmed?'rgba(232,130,12,0.15)':'rgba(245,158,11,0.15)',display:'grid',placeItems:'center',color:confirmed?'var(--teal)':'var(--gold)'}}>
           {confirmed ? <CheckCircle2 size={36}/> : <Clock3 size={36}/>}
         </div>
-        <h1 style={{fontFamily:'Jost, sans-serif',fontSize:36,margin:'0 0 8px'}} data-testid="confirm-heading">{confirmed ? "Booking confirmed!" : "Payment pending"}</h1>
+        <h1 style={{fontFamily:'Jost, sans-serif',fontSize:36,margin:'0 0 8px'}} data-testid="confirm-heading">{confirmed ? (isDemo ? "Demo booking confirmed!" : "Booking confirmed!") : "Payment pending"}</h1>
         <p style={{color:'var(--muted)',marginBottom:28}}>Reference <code style={{color:'var(--teal)',fontFamily:MONO}}>{booking.booking_id}</code>{isDemo && <span className="badge-demo" style={{marginLeft:8}} data-testid="confirm-demo-badge">DEMO</span>}</p>
 
         {isDemo && (
           <div className="dl-note dl-demo" style={{textAlign:'left',marginBottom:24}} role="note" data-testid="confirm-demo-note">
-            This is a demo booking. No real ticket or hotel reservation was made and no real money was charged.
+            {isHotel
+              ? "This is a demo booking. The room and price were live, but no reservation was made at the hotel and no real money was charged."
+              : "This is a demo booking. No real ticket was issued and no real money was charged."}
           </div>
         )}
 

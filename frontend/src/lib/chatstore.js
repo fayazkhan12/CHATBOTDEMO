@@ -148,7 +148,7 @@ export function extractSearchIntent(text) {
   }
 }
 
-const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "budget_tier", "budget", "area", "pickup", "drop", "vehicle", "when"];
+const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "area", "pickup", "drop", "vehicle", "when"];
 const plainIntent = (intent) => Object.fromEntries(KEEP_KEYS.filter((k) => intent[k] !== undefined && intent[k] !== null && intent[k] !== "").map((k) => [k, intent[k]]));
 
 function historyForServer(messages) {
@@ -255,6 +255,9 @@ export async function runSearch(intent, replyId) {
       start_date: intent.start_date,
       end_date: intent.end_date || intent.start_date,
       travellers: Number(intent.travellers || 2),
+      ...(intent.service === "hotels" && Number(intent.rooms) > 1 ? { rooms: Number(intent.rooms) } : {}),
+      ...(intent.service === "hotels" && Number(intent.children) > 0 && Array.isArray(intent.child_ages) && intent.child_ages.length === Number(intent.children)
+        ? { children: Number(intent.children), child_ages: intent.child_ages.map(Number) } : {}),
       ...(intent.budget_tier ? { budget_tier: intent.budget_tier } : {}),
       ...(intent.budget ? { budget: Number(intent.budget) } : {}),
       ...(intent.area ? { area: intent.area } : {}),

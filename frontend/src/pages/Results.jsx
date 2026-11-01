@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import SearchBar from "../components/SearchBar";
 import ResultCard from "../components/ResultCard";
 import { http } from "../lib/api";
-import { money, shortDate, dateRange, plural, dayFromNow } from "../lib/format";
+import { money, shortDate, dateRange, dayFromNow, guestLine, readOccupancy } from "../lib/format";
 import { rideUrl } from "../lib/rides";
 
 const NOUN = { hotels: ["hotel", "hotels"], flights: ["flight", "flights"], buses: ["bus", "buses"], cabs: ["cab", "cabs"] };
@@ -42,6 +42,11 @@ export default function Results() {
       travellers: Number(initial.travellers || 2),
     };
     if (initial.destination_id) out.destination_id = initial.destination_id;
+    if (service === "hotels") {      // rooms and children (travellers = the adults)
+      const occ = readOccupancy(initial);
+      out.rooms = occ.rooms;
+      if (occ.children > 0) { out.children = occ.children; out.child_ages = occ.childAges; }
+    }
     return out;
   }, [initial, service, startDate, endDate]);
 
@@ -102,7 +107,7 @@ export default function Results() {
     let out = [...data.results];
     if (cap !== null) out = out.filter((r) => r.price <= cap);
     if (sort === "price") out.sort((a, b) => a.price - b.price);
-    else if (sort === "rating") out.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    else if (sort === "rating") out.sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.review_count || 0) - (a.review_count || 0));
     return out;
   }, [data.results, cap, sort]);
 
@@ -122,8 +127,9 @@ export default function Results() {
       const parts = [`Hotels in ${initial.destination || "your city"}`];
       const range = dateRange(first.check_in || startDate, first.check_out || endDate);
       if (range) parts.push(range);
-      const guests = Number(first.guests || initial.travellers);
-      if (guests > 0) parts.push(plural(guests, "guest"));
+      const occ = readOccupancy(initial);
+      const who = guestLine(first.adults ? first : { adults: occ.adults, children: occ.children, rooms: occ.rooms, guests: first.guests || initial.travellers });
+      if (who) parts.push(who);
       return parts.join(" · ");
     }
     const parts = [`${initial.origin || "New Delhi"} → ${initial.destination || "Goa"}`];
@@ -170,7 +176,7 @@ export default function Results() {
             <span className={isLive ? "badge-live" : "badge-demo"} data-testid="data-badge">{isLive ? "Live prices" : "Demo data"}</span>
             <p style={{color:'var(--muted)',fontSize:11,marginTop:10,lineHeight:1.5}} data-testid="data-note">
               {isLive
-                ? "Prices come live from our hotel partners and can change."
+                ? "Prices come live from our hotel partners and can change. Booking on this site is a demo for now: nothing is sent to the hotel."
                 : "Sample listings that show how search and booking work. No real tickets are issued."}
             </p>
           </div>

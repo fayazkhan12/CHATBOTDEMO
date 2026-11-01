@@ -5,7 +5,7 @@ import { Plane, Hotel, BusFront, Car, MapPin, CalendarDays, Users, Search, Clock
 import DestinationInput from "./DestinationInput";
 import PlaceInput from "./PlaceInput";
 import { boxLimits, boxToWhen, rideUrl, whenToBox } from "../lib/rides";
-import { dayFromNow, addDays } from "../lib/format";
+import { dayFromNow, addDays, plural, readOccupancy } from "../lib/format";
 
 const SERVICES = [
   { id: "flights", label: "Flights", icon: Plane },
@@ -17,7 +17,7 @@ const SERVICES = [
 const MAX_NIGHTS = 30;
 
 // What is wrong with the form, in words the visitor can act on. "" means it is fine to search.
-export function formProblem({ service, origin, destination, startDate, endDate }) {
+export function formProblem({ service, origin, destination, startDate, endDate, rooms, adults, children, childAges }) {
   const hotel = service === "hotels";
   const from = String(origin || "").trim();
   const to = String(destination || "").trim();
@@ -30,6 +30,15 @@ export function formProblem({ service, origin, destination, startDate, endDate }
     if (!endDate) return "Please choose your check-out date.";
     if (endDate <= startDate) return "Check-out must be after check-in.";
     if (endDate > addDays(startDate, MAX_NIGHTS)) return `You can search up to ${MAX_NIGHTS} nights at a time.`;
+    const roomCount = Number(rooms) || 1;
+    const adultCount = Number(adults) || 0;
+    const kids = Number(children) || 0;
+    if (adultCount && roomCount > adultCount) return "Every room needs at least one adult. Choose fewer rooms or more adults.";
+    if (kids > 0) {
+      const ages = (childAges || []).slice(0, kids);
+      const bad = (a) => a === "" || a === null || a === undefined || !Number.isInteger(Number(a)) || Number(a) < 0 || Number(a) > 17;
+      if (ages.length < kids || ages.some(bad)) return "Please choose the age of each child.";
+    }
   }
   return "";
 }
@@ -43,15 +52,25 @@ export default function SearchBar({ initial = {}, onSubmit }) {
   const [destinationId, setDestinationId] = useState(initial.destination_id || "");
   const [startDate, setStartDate] = useState(initial.start_date || dayFromNow(1));
   const [endDate, setEndDate] = useState(initial.end_date || dayFromNow(3));
-  const [travellers, setTravellers] = useState(Number(initial.travellers) || 2);
+  const occ = readOccupancy(initial);
+  const [travellers, setTravellers] = useState(Number(initial.travellers) || 2);   // hotels: the adults
+  const [rooms, setRooms] = useState(occ.rooms);
+  const [children, setChildren] = useState(occ.children);
+  const [childAges, setChildAges] = useState(occ.childAges.map(String));
   const hotel = service === "hotels";
   const ride = service === "cabs";
   // rides: bike, auto and cab have their own screen; this tab only collects the two places and the time
   const [pickup, setPickup] = useState(null);
   const [drop, setDrop] = useState(null);
   const [rideWhen, setRideWhen] = useState("now");
-  const counts = [1, 2, 3, 4, 5, 6];
+  const counts = hotel ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1, 2, 3, 4, 5, 6];
   if (!counts.includes(travellers)) counts.push(travellers);
+
+  // every room has at least one adult, so the two numbers move together
+  const changeRooms = (n) => { setRooms(n); if (travellers < n) setTravellers(n); };
+  const changeAdults = (n) => { setTravellers(n); if (rooms > n) setRooms(n); };
+  const changeChildren = (n) => { setChildren(n); setChildAges((old) => Array.from({ length: n }, (_, i) => old[i] ?? "")); };
+  const changeAge = (i, value) => setChildAges((old) => Object.assign([...old], { [i]: value }));
 
   const changeStart = (value) => {
     setStartDate(value);
@@ -65,7 +84,7 @@ export default function SearchBar({ initial = {}, onSubmit }) {
       navigate(rideUrl({ pickup, drop, when: rideWhen }));
       return;
     }
-    const problem = formProblem({ service, origin, destination, startDate, endDate });
+    const problem = formProblem({ service, origin, destination, startDate, endDate, rooms, adults: travellers, children, childAges });
     if (problem) {
       toast.error(problem);
       return;
@@ -77,6 +96,8 @@ export default function SearchBar({ initial = {}, onSubmit }) {
       start_date: startDate,
       end_date: hotel ? endDate : startDate,
       travellers,
+      ...(hotel && rooms > 1 ? { rooms } : {}),
+      ...(hotel && children > 0 ? { children, child_ages: childAges.slice(0, children).join(",") } : {}),
       ...(destinationId ? { destination_id: destinationId } : {}),
     };
     if (onSubmit) return onSubmit(payload);
@@ -184,14 +205,42 @@ export default function SearchBar({ initial = {}, onSubmit }) {
             )}
           </div>
         </div>
-        <div className="field">
-          <div className="field-label"><Users size={11}/> Travellers</div>
-          <div className="field-input">
-            <select value={travellers} onChange={(e) => setTravellers(Number(e.target.value))} data-testid="travellers-select">
-              {counts.sort((a, b) => a - b).map(n => <option key={n} value={n}>{n} {n === 1 ? "guest" : "guests"}</option>)}
-            </select>
+        {hotel ? (
+          <div className="field field-guests">
+            <div className="field-label"><Users size={11}/> Rooms &amp; guests</div>
+            <div className="field-input guest-row">
+              <select value={rooms} onChange={(e) => changeRooms(Number(e.target.value))} aria-label="Rooms" data-testid="rooms-select">
+                {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{plural(n, "room")}</option>)}
+              </select>
+              <select value={travellers} onChange={(e) => changeAdults(Number(e.target.value))} aria-label="Adults" data-testid="travellers-select">
+                {counts.sort((a, b) => a - b).map(n => <option key={n} value={n}>{plural(n, "adult")}</option>)}
+              </select>
+              <select value={children} onChange={(e) => changeChildren(Number(e.target.value))} aria-label="Children" data-testid="children-select">
+                {[0, 1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n === 0 ? "No children" : plural(n, "child", "children")}</option>)}
+              </select>
+            </div>
+            {children > 0 && (
+              <div className="child-ages" data-testid="child-ages">
+                {Array.from({ length: children }, (_, i) => (
+                  <select key={i} value={childAges[i] ?? ""} onChange={(e) => changeAge(i, e.target.value)} aria-label={`Age of child ${i + 1}`} data-testid={`child-age-${i}`}>
+                    <option value="" disabled>{`Child ${i + 1} age`}</option>
+                    <option value="0">Under 1 year</option>
+                    {Array.from({ length: 17 }, (_, k) => k + 1).map(a => <option key={a} value={a}>{plural(a, "year")}</option>)}
+                  </select>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <div className="field">
+            <div className="field-label"><Users size={11}/> Travellers</div>
+            <div className="field-input">
+              <select value={travellers} onChange={(e) => setTravellers(Number(e.target.value))} data-testid="travellers-select">
+                {counts.sort((a, b) => a - b).map(n => <option key={n} value={n}>{n} {n === 1 ? "guest" : "guests"}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
         <button className="search-submit" onClick={submit} data-testid="search-submit">
           <Search size={18}/> Search
         </button>

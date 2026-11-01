@@ -35,6 +35,12 @@ function visibleBookings(list) {
   });
 }
 
+// "Confirmed" / "Paid" of a demo booking is shown as "(demo)": nothing was booked at a hotel, airline or bus operator
+const statusText = (b) => {
+  const text = STATUS_TEXT[b.status] || (b.status || "").replace(/_/g, " ");
+  return b.item && b.item.mode === "DEMO" && ["confirmed", "paid"].includes(b.status) ? `${text} (demo)` : text;
+};
+
 const bookedOn = (iso) => {
   const d = new Date(iso || "");
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
@@ -101,11 +107,11 @@ export default function Dashboard() {
                     <strong>{b.item?.title}</strong>
                     <div style={{color:'var(--muted)',fontSize:13}}>{b.item?.brand}</div>
                     {line ? <div style={{color:'var(--muted)',fontSize:13}} data-testid="booking-line">{line}</div> : null}
-                    <small>Booking &middot; {b.booking_id} &middot; {money(b.amount_rupees)}{on ? ` · ${on}` : ""}</small>
+                    <small>Booking &middot; {b.booking_id} &middot; {money(b.amount_rupees)}{on ? ` · ${on}` : ""}{b.item?.mode === "DEMO" && <span className="badge-demo" style={{marginLeft:6}} data-testid="booking-demo-badge">DEMO</span>}</small>
                   </div>
                 </div>
                 <div className="booking-actions">
-                  <span className={`booking-status ${b.status}`}>{STATUS_TEXT[b.status] || (b.status || "").replace(/_/g, " ")}</span>
+                  <span className={`booking-status ${b.status}`}>{statusText(b)}</span>
                   {open
                     ? <button className="btn-primary" onClick={() => navigate(`/checkout/${b.booking_id}`)} data-testid={`continue-${b.booking_id}`}>Continue</button>
                     : <button className="btn-ghost" onClick={() => navigate(`/booking/${b.booking_id}`)} data-testid={`voucher-${b.booking_id}`}>View</button>}

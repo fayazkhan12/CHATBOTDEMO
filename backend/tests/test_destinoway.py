@@ -99,14 +99,23 @@ def test_detail_404():
 
 # ---------- Featured ----------
 def test_featured_destinations():
+    # The destinations come from the company's own home-page content. Nothing is invented:
+    # when the company API does not answer, the lists are simply empty and "source" says so.
     r = requests.get(f"{BASE_URL}/api/featured/destinations")
     assert r.status_code == 200
     d = r.json()
-    assert len(d["destinations"]) > 0
-    assert len(d["collections"]) > 0
+    assert d["source"] in ("company", "unavailable")
+    assert isinstance(d["destinations"], list) and isinstance(d["top_hotels"], list)
+    if d["source"] == "unavailable":
+        assert d["destinations"] == [] and d["top_hotels"] == []
     for item in d["destinations"]:
-        for k in ("city", "image", "from_price"):
+        for k in ("city", "name", "image", "destination_id"):
             assert k in item
+        assert item["image"].startswith("https://")
+        assert "from_price" not in item          # the old made-up prices are gone
+    for hotel in d["top_hotels"]:
+        for k in ("name", "city", "image"):
+            assert k in hotel
 
 
 # ---------- Trips ----------

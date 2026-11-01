@@ -6,7 +6,7 @@ import { useVoiceDock, useFormGuide, CHECKOUT_VOICE_FIELDS, highlightPay } from 
 import { useAuth } from "../lib/auth";
 import { ShieldCheck } from "lucide-react";
 import { validateTraveller, cleanName, tidyTraveller } from "../lib/validate";
-import { money, tripLine } from "../lib/format";
+import { money, tripLine, demoBookingNote } from "../lib/format";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
@@ -106,7 +106,7 @@ export default function Checkout() {
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
             });
-            toast.success("Payment confirmed!");
+            toast.success("Test payment confirmed!");
             navigate(`/booking/${bid}`);
           } catch {
             toast.error("Payment verification failed. Contact support.");
@@ -181,10 +181,10 @@ export default function Checkout() {
           <label><span>Address</span><input value={form.address} onChange={(e)=>setForm({...form,address:e.target.value})} onBlur={() => check("address")} aria-invalid={!!errors.address} data-testid="checkout-address"/>{bad("address")}</label>
         </div>
         <button type="submit" className="btn-primary" style={{width:'100%',padding:'15px',marginTop:14,fontSize:15}} disabled={paying} data-testid="pay-btn">
-          {paying ? "Processing…" : hasGateway ? `Pay ${total} securely` : `Confirm demo booking · ${total}`}
+          {paying ? "Processing…" : hasGateway ? `Pay ${total} (test payment)` : `Confirm demo booking · ${total}`}
         </button>
         <div style={{display:'flex',alignItems:'center',gap:8,color:'var(--muted)',fontSize:12,marginTop:14,justifyContent:'center'}} data-testid="pay-note">
-          <ShieldCheck size={14} style={{color:'var(--teal)'}}/> {hasGateway ? "Razorpay secured · 256-bit encrypted" : "Demo checkout · no real payment is taken"}
+          <ShieldCheck size={14} style={{color:'var(--teal)'}}/> {hasGateway ? "Razorpay test mode · no real money is taken" : "Demo checkout · no real payment is taken"}
         </div>
       </form>
 
@@ -199,7 +199,7 @@ export default function Checkout() {
         <div style={{color:'var(--muted)',fontSize:13,marginBottom:14}}>{item.brand}</div>
         {isDemoItem && (
           <div className="dl-note dl-demo" role="note" data-testid="summary-demo">
-            Demo booking. Sample data only: no real ticket is issued and no real money is charged.
+            {demoBookingNote(item)}
           </div>
         )}
         <div className="booking-row"><span>Service</span><span style={{textTransform:'capitalize'}}>{booking.service}</span></div>

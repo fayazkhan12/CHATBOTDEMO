@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useVoiceDock, markVoiceFlow, takeReserveFlow } from "../lib/useVoiceDock";
 import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
-import { ArrowLeft, Car, Check, Clock3, MapPin, Star, Users, CalendarDays } from "lucide-react";
+import { ArrowLeft, Car, Check, Clock3, Hotel, MapPin, Star, Users, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { noteSelection, selectionFromItem } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { money, shortDate, clockTime, dateRange, plural } from "../lib/format";
+import { money, shortDate, clockTime, dateRange, plural, guestLine } from "../lib/format";
 
 // hotel ids on the website look like ak-<supplierHotelId>
 function hotelIdOf(item) {
@@ -177,6 +177,7 @@ export default function Detail() {
     : (item.meta || []);
   const nights = Number(item.nights) || (live && Number(live.nights)) || 0;
   const guests = Number(item.guests) || 0;
+  const guestText = isHotel ? guestLine(item) : "";
   const shownPrice = room ? room.price.payable : Math.round(Number(item.price) || 0);
   const hero = photos.length ? photos[Math.min(photo, photos.length - 1)] : null;
   const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : "Reserve now";
@@ -186,9 +187,10 @@ export default function Detail() {
   // where a ride to this hotel should end (the hotel's own coordinates when the supplier gave them)
   const hotelSel = isHotel ? selectionFromItem(item, "viewed") : null;
   const hotelPlace = hotelSel ? { name: hotelSel.lat ? hotelSel.name : [hotelSel.name, hotelSel.city].filter(Boolean).join(", "), lat: hotelSel.lat, lng: hotelSel.lng } : null;
+  // the guests' rating only (the hotel's star class is never shown as a rating); the search card's rating is the same supplier data
   const hasGuestRating = !!(content && content.rating && Number(content.rating.value) > 0);
   const ratingValue = hasGuestRating ? Number(content.rating.value) : Number(item.rating) || 0;
-  const ratingCount = hasGuestRating ? Number(content.rating.count) || 0 : 0;
+  const ratingCount = hasGuestRating ? Number(content.rating.count) || 0 : Number(item.review_count) || 0;
 
   // hotels: the stay; flights, buses and cabs: the travel day
   const tripDay = shortDate(item.check_in || item.departure);
@@ -218,6 +220,12 @@ export default function Detail() {
           <img src={hero.url} alt={isHotel ? (hero.caption || item.title) : ""} onError={() => setBrokenPhotos((b) => ({ ...b, [hero.url]: true }))}/>
         </div>
       )}
+      {!hero && isHotel && liveState !== "loading" && liveState !== "idle" && (
+        <div className="detail-hero detail-hero-none" role="img" aria-label="No photo available" data-testid="no-photo">
+          <Hotel size={56}/>
+          <span>No photo available for this hotel</span>
+        </div>
+      )}
       {photos.length > 1 && (
         <div className="dl-thumbs" data-testid="photo-strip">
           {photos.slice(0, 12).map((p, i) => (
@@ -243,7 +251,7 @@ export default function Detail() {
             {address && <span><MapPin size={14}/> {address}</span>}
             {ratingValue > 0 && (
               <span data-testid="detail-rating">
-                <Star size={14} style={{color:'var(--gold)',fill:'var(--gold)'}}/> {ratingValue} rating
+                <Star size={14} style={{color:'var(--gold)',fill:'var(--gold)'}}/> {ratingValue} guest rating
                 {ratingCount > 0 ? ` (${plural(ratingCount, "review")})` : ""}
               </span>
             )}
@@ -253,6 +261,11 @@ export default function Detail() {
           {isDemo && (
             <div className="dl-note dl-demo" role="note" data-testid="demo-note">
               Demo listing. This is sample data to show how booking works. No real ticket is issued and no real money is charged.
+            </div>
+          )}
+          {isLiveHotel && (
+            <div className="dl-note dl-demo" role="note" data-testid="booking-demo-note">
+              The rooms and prices on this page are live. Booking on this site is still a demo: your reservation is not sent to the hotel and no real money is charged.
             </div>
           )}
 
@@ -393,7 +406,9 @@ export default function Detail() {
           {room && <div className="booking-row"><span>Room</span><span className="dl-row-val">{room.name}</span></div>}
           {stay ? <div className="booking-row"><span className="dl-row-label"><CalendarDays size={13}/>{isHotel ? "Stay" : "Date"}</span><span>{stay}</span></div> : null}
           {isHotel && nights > 0 ? <div className="booking-row"><span>Length</span><span>{plural(nights, "night")}</span></div> : null}
-          {guests > 0 ? <div className="booking-row"><span className="dl-row-label"><Users size={13}/>{isHotel ? "Guests" : "Travellers"}</span><span>{guests}</span></div> : null}
+          {isHotel
+            ? (guestText ? <div className="booking-row" data-testid="booking-guests"><span className="dl-row-label"><Users size={13}/>Guests</span><span className="dl-row-val">{guestText}</span></div> : null)
+            : (guests > 0 ? <div className="booking-row"><span className="dl-row-label"><Users size={13}/>Travellers</span><span>{guests}</span></div> : null)}
           <div className="booking-row"><span>Total</span><span>{money(shownPrice)}</span></div>
           <button
             className="btn-primary"
@@ -405,7 +420,7 @@ export default function Detail() {
             {reserveLabel}
           </button>
           <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:10,lineHeight:1.5}}>
-            {isDemo ? "Demo listing. No real payment is taken." : "You won't be charged until the next step. Razorpay-secured."}
+            {isDemo ? "Demo listing. No real payment is taken." : "Demo booking for now: this reservation is not sent to the hotel and no real money is charged."}
           </p>
           {isHotel && (
             <button className="btn-ghost detail-ride-cta" style={{width:'100%',marginTop:12}} onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel">

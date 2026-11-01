@@ -11,7 +11,8 @@ export default function ResultCard({ item, onOpen }) {
   const dep = clockTime(item.departure);
   const arr = clockTime(item.arrival);
   const nights = Number(item.nights) || 0;
-  const rating = Number(item.rating) || 0;
+  const rating = Number(item.rating) || 0;          // hotels: the guests' rating only (never the star class)
+  const reviews = Number(item.review_count) || 0;
   const stops = item.stops;
   return (
     <article className="result-card" onClick={() => onOpen(item)} data-testid={`result-card-${item.id}`}>
@@ -26,7 +27,7 @@ export default function ResultCard({ item, onOpen }) {
         <div className="result-sub">{item.brand}</div>
         <div className="result-meta">
           {item.duration && <span><Clock3 size={13}/> {item.duration}</span>}
-          {rating > 0 && <span><Star size={13} style={{color:'var(--gold)',fill:'var(--gold)'}}/> {rating}</span>}
+          {rating > 0 && <span title="Guest rating" data-testid="card-rating"><Star size={13} style={{color:'var(--gold)',fill:'var(--gold)'}}/> {rating}{reviews > 0 ? ` (${plural(reviews, "review")})` : ""}</span>}
           {item.location && <span><MapPin size={13}/> {item.location}</span>}
           {stops !== undefined && stops !== null && <span>{stops === 0 ? "Non-stop" : plural(Number(stops), "stop")}</span>}
           {dep && <span>{dep}{arr ? ` - ${arr}` : ""}{arr && arr < dep ? " (+1)" : ""}</span>}

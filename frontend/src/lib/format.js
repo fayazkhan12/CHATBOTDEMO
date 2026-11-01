@@ -30,6 +30,39 @@ export function dateRange(from, to) {
   return a && b ? `${a} - ${b}` : "";
 }
 
+// Who stays in a hotel offer: "2 guests", or "2 adults, 1 child, 2 rooms" when there are children or more than one room.
+// Works for a search result, a saved offer and a booking item. Older items only know the guest count.
+export function guestLine(item) {
+  if (!item) return "";
+  const adults = Number(item.adults) || 0;
+  const kids = Number(item.children) || 0;
+  const rooms = Number(item.rooms) || 1;
+  if (!adults) {
+    const n = Number(item.guests) || 0;
+    return n > 0 ? plural(n, "guest") : "";
+  }
+  if (!kids && rooms <= 1) return plural(adults, "guest");
+  const parts = [plural(adults, "adult")];
+  if (kids) parts.push(plural(kids, "child", "children"));
+  if (rooms > 1) parts.push(plural(rooms, "room"));
+  return parts.join(", ");
+}
+
+// The rooms and guests of a hotel search, read from the page link (?travellers=2&rooms=1&children=2&child_ages=7,3).
+// Anything that does not make sense falls back to the plain default, and there are never children without an age each.
+export function readOccupancy(src = {}) {
+  const whole = (v, lo, hi, fallback) => {
+    const n = Math.floor(Number(v));
+    return Number.isFinite(n) && n >= lo && n <= hi ? n : fallback;
+  };
+  const adults = whole(src.travellers, 1, 10, 2);
+  const rooms = Math.min(whole(src.rooms, 1, 5, 1), adults);   // every room has an adult
+  const kids = whole(src.children, 0, 6, 0);
+  let ages = String(src.child_ages === undefined || src.child_ages === null ? "" : src.child_ages).split(",").map((s) => s.trim()).filter((s) => s !== "").map(Number);
+  if (!kids || ages.length !== kids || ages.some((a) => !Number.isInteger(a) || a < 0 || a > 17)) ages = [];
+  return { adults, rooms, children: ages.length, childAges: ages };
+}
+
 // One short line about what was booked, e.g. "10 Nov - 12 Nov \u00b7 2 nights \u00b7 2 guests".
 // Works for a saved booking item as well as for a search result. Unknown parts are left out.
 export function tripLine(item) {
@@ -39,7 +72,8 @@ export function tripLine(item) {
     const range = dateRange(item.check_in, item.check_out);
     if (range) parts.push(range);
     if (Number(item.nights) > 0) parts.push(plural(Number(item.nights), "night"));
-    if (Number(item.guests) > 0) parts.push(plural(Number(item.guests), "guest"));
+    const who = guestLine(item);
+    if (who) parts.push(who);
   } else {
     const day = shortDate(item.check_in || item.departure);
     if (day) parts.push(day);
@@ -67,4 +101,12 @@ export function addDays(iso, n) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
   if (!m) return "";
   return isoDay(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + n));
+}
+
+// The sentence that tells the visitor a booking is a demo. A hotel's room and price are live, but the reservation is not sent anywhere.
+export function demoBookingNote(item) {
+  const hotel = !!item && ((item.type || "") === "hotel" || String(item.id || "").startsWith("ak-"));
+  return hotel
+    ? "Demo booking. The room and price are live, but this reservation is not sent to the hotel and no real money is charged."
+    : "Demo booking. Sample data only: no real ticket is issued and no real money is charged.";
 }

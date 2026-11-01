@@ -860,3 +860,18 @@ a { color: inherit; text-decoration: none; }
 .dash-tabs::-webkit-scrollbar { display: none; }
 .dash-tabs button { white-space: nowrap; flex: 0 0 auto; }
 @media (max-width: 640px) { .dash-tabs button { padding: 10px 13px; } }
+
+/* hotel search: rooms, adults and children share one box; the age of every child shows under them */
+@media (min-width: 1051px) {
+  .search-fields.is-hotel { grid-template-columns: 1.35fr 1.55fr 1.85fr auto; }
+}
+.field-guests .guest-row { flex-wrap: wrap; gap: 6px 10px; }
+.field-guests .guest-row select { width: auto; flex: 1 1 auto; min-width: 0; font-size: 15px; padding: 9px 0; cursor: pointer; }
+.child-ages { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.child-ages select { width: auto; max-width: 100%; flex: 0 1 auto; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-2); color: var(--text); font: 600 14px 'Roboto', sans-serif; padding: 9px 10px; cursor: pointer; }
+.child-ages select option { background: var(--surface-2); color: var(--text); }
+.field-guests select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 4px; }
+/* a hotel without any photo shows a plain panel, never a stock picture */
+.detail-hero-none { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; aspect-ratio: auto; min-height: 160px; background: var(--surface-2); color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+.detail-hero-none svg { color: var(--teal); }
+.inline-photo-none { width: 110px; min-height: 100px; height: 100%; display: grid; place-items: center; background: var(--surface-2); color: var(--teal); }

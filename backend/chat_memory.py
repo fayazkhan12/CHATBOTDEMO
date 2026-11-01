@@ -52,6 +52,28 @@ def _day(value: Any) -> Optional[str]:
         return None
 
 
+def occupancy(raw: Any) -> Dict[str, Any]:
+    """The optional rooms / children of a hotel block, checked: {"rooms": 1-5, "children": 1-6, "child_ages": [0-17, one per child]}.
+    A part that is missing or wrong is left out (children without one valid age per child are left out as a whole)."""
+    out: Dict[str, Any] = {}
+    if not isinstance(raw, dict):
+        return out
+    try:
+        rooms = int(raw.get("rooms"))
+        if 1 <= rooms <= 5:
+            out["rooms"] = rooms
+    except (TypeError, ValueError):
+        pass
+    try:
+        kids = int(raw.get("children"))
+        ages = [int(a) for a in (raw.get("child_ages") or [])]
+        if 1 <= kids <= 6 and len(ages) == kids and all(0 <= a <= 17 for a in ages):
+            out["children"], out["child_ages"] = kids, ages
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 def clean_search(raw: Any) -> Optional[Dict[str, Any]]:
     """A safe copy of a search block (only known keys, right types), or None when it is not usable."""
     if not isinstance(raw, dict):
@@ -78,6 +100,10 @@ def clean_search(raw: Any) -> Optional[Dict[str, Any]]:
             out["travellers"] = n
     except (TypeError, ValueError):
         pass
+    if service == "hotels":          # rooms and children of a hotel search (travellers = the adults)
+        occ = occupancy(raw)
+        if occ:
+            out.update(occ)
     if raw.get("budget_tier") in TIERS:
         out["budget_tier"] = raw["budget_tier"]
     try:
@@ -242,6 +268,11 @@ def describe_trip(trip: Dict[str, Any]) -> str:
         bits.append(f"on {a} ({_nice(a)})")
     if trip.get("travellers"):
         bits.append(f"{trip['travellers']} traveller{'s' if trip['travellers'] != 1 else ''}")
+    if service == "hotels" and trip.get("children"):
+        ages = ", ".join(str(a) for a in (trip.get("child_ages") or []))
+        bits.append(f"{trip['children']} child{'ren' if trip['children'] != 1 else ''}" + (f" (ages {ages})" if ages else ""))
+    if service == "hotels" and (trip.get("rooms") or 1) > 1:
+        bits.append(f"{trip['rooms']} rooms")
     if trip.get("budget_tier"):
         bits.append(f"budget tier {trip['budget_tier']}")
     elif trip.get("budget"):
@@ -688,6 +719,16 @@ FIXED = {
         "en": "I can search for 1 to 10 guests at a time. How many guests?",
         "hinglish": "Ek baar mein 1 se 10 log tak dekh sakta hoon. Kitne log honge?",
         "hi": "एक बार में 1 से 10 लोग देख सकता हूँ। कितने लोग होंगे?",
+    },
+    "ask_child_ages": {
+        "en": "How old is each child? Please tell me the age of every child travelling.",
+        "hinglish": "Har bachche ki umar kitni hai? Jo bachche saath hain unki umar bata dijiye.",
+        "hi": "हर बच्चे की उम्र कितनी है? साथ चल रहे हर बच्चे की उम्र बता दीजिए।",
+    },
+    "bad_rooms": {
+        "en": "Every room needs at least one adult, and I can search up to 5 rooms. How many rooms and adults?",
+        "hinglish": "Har room me kam se kam ek adult chahiye, aur main 5 room tak dekh sakta hoon. Kitne room aur kitne adult?",
+        "hi": "हर कमरे में कम से कम एक वयस्क चाहिए, और मैं 5 कमरे तक देख सकता हूँ। कितने कमरे और कितने वयस्क?",
     },
     "past_time": {
         "en": "That pickup time has already passed. What time should I book the ride for?",
