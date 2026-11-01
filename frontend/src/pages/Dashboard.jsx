@@ -138,7 +138,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="booking-actions">
-                  <span className={`booking-status ride-${stage}`}>{live && stage !== "scheduled" ? <><Zap size={12}/> {STAGE_TITLE[stage]}</> : STAGE_TITLE[stage]}</span>
+                  <span className={`booking-status ride-${stage}`}>{live && stage !== "scheduled" ? <><Zap size={12}/> {STAGE_TITLE[stage]}</> : stage === "completed" ? "Completed" : STAGE_TITLE[stage]}</span>
                   <button className={live ? "btn-primary" : "btn-ghost"} onClick={() => navigate(live || stage === "cancelled" ? `/ride/${r.ride_id}` : `/ride/${r.ride_id}/receipt`)} data-testid={`ride-open-${r.ride_id}`}>{live ? "Track" : stage === "cancelled" ? "View" : "Receipt"}</button>
                 </div>
               </div>

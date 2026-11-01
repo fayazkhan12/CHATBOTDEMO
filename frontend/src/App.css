@@ -617,9 +617,10 @@ a { color: inherit; text-decoration: none; }
 .ride-vehicle-wrap { transition: transform 1.9s linear; }
 .leaflet-zoom-anim .ride-vehicle-wrap { transition: none; }
 
-/* layout shared by the booking screen and the live ride: a panel and a map */
-.rides-page, .ride-track { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); min-height: calc(100vh - 66px); background: var(--surface-2); }
-.rides-map-col, .ride-track-map { position: sticky; top: 66px; height: calc(100vh - 66px); order: 2; }
+/* layout shared by the booking screen and the live ride: a panel and a map. 79px is the height of the top bar (78.5px):
+   with a smaller number the top of the map hid under the bar and its bottom edge, with the map credit, fell below the screen */
+.rides-page, .ride-track { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); min-height: calc(100vh - 79px); background: var(--surface-2); }
+.rides-map-col, .ride-track-map { position: sticky; top: 79px; height: calc(100vh - 79px); order: 2; }
 .rides-panel, .ride-sheet { order: 1; background: var(--surface); padding: 22px clamp(16px, 2.4vw, 28px) 40px; overflow-y: auto; border-right: 1px solid var(--line); min-width: 0; }
 .rides-title { font-family: 'Jost', sans-serif; font-size: 30px; letter-spacing: -0.02em; margin: 0; }
 .rides-sub { color: var(--muted); margin: 4px 0 18px; font-size: 14px; }

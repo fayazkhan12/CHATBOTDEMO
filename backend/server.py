@@ -1289,9 +1289,12 @@ _ALIAS_GROUPS = [
     ("vadodara", "baroda"), ("visakhapatnam", "vizag"), ("thiruvananthapuram", "trivandrum"),
     ("puducherry", "pondicherry"), ("prayagraj", "allahabad"), ("shimla", "simla"), ("delhi", "new delhi"),
 ]
-_ASK_CITY = "Kaunse shehar ke liye dekhna hai? Shehar ka naam ek baar dobara bata dijiye."
-_CITY_NOT_FOUND = "Mujhe wo shehar nahi mila, spelling ek baar check karke dobara bata dijiye."
-_ASK_PLACES = "Kahan se kahan jana hai? Pickup aur drop ki jagah bata dijiye."
+# why a block was refused -> the fixed reply that asks again (cmem.FIXED has each one in English, Hinglish and Hindi)
+_REFUSAL_TEXT = {
+    "no_ride_places": "ask_places", "same_place": "same_place", "bad_place": "bad_place", "past_time": "past_time", "far_time": "far_time",
+    "city_not_found": "city_not_found", "past_date": "past_date", "no_date": "ask_date", "no_nights": "ask_nights",
+    "too_long": "bad_nights", "bad_travellers": "bad_travellers",
+}
 
 
 def _names_for(dest: str) -> set:
@@ -1344,12 +1347,16 @@ def _same_place(a: Any, b: Any) -> bool:
     return bool(a and b and (_names_for(a) & _names_for(b)))
 
 
-def _fix_ride_block(raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]:
-    """A ride request: two place names, an optional vehicle and an optional pickup time (India time)."""
+def _fix_ride_block(raw: Dict[str, Any], today: Optional[date] = None) -> Tuple[Optional[Dict[str, Any]], str]:
+    """A ride request: two place names, an optional vehicle and an optional pickup time (India time).
+    A date or a number is not a place, and a pickup time that has passed (or is over 30 days away) is asked about, not changed."""
+    today = today or _today_ist()
     pickup, drop = _clean(raw.get("pickup"), 80), _clean(raw.get("drop"), 80)
     pickup, drop = cmem.text(pickup), cmem.text(drop)
     if not pickup or not drop:
         return None, "no_ride_places"
+    if cmem.not_a_place(pickup, today) or cmem.not_a_place(drop, today):
+        return None, "bad_place"
     if pickup.casefold() == drop.casefold():
         return None, "same_place"
     vehicle = raw.get("vehicle") if raw.get("vehicle") in cmem.VEHICLES else "any"
@@ -1360,15 +1367,30 @@ def _fix_ride_block(raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]
             at = datetime.strptime(w.replace("T", " ")[:16], "%Y-%m-%d %H:%M")
         except ValueError:
             at = None
-        now_ist = datetime.now(IST).replace(tzinfo=None)
-        if at and now_ist + timedelta(minutes=15) <= at <= now_ist + timedelta(days=30):
-            when = at.strftime("%Y-%m-%d %H:%M")
+        if at:
+            now_ist = datetime.now(IST).replace(tzinfo=None)
+            if at > now_ist + timedelta(days=30):
+                return None, "far_time"
+            if at >= now_ist + timedelta(minutes=15):
+                when = at.strftime("%Y-%m-%d %H:%M")
+            elif at < now_ist - timedelta(minutes=30):
+                return None, "past_time"
+            # up to 15 minutes ahead, or a few minutes ago: the visitor means "now"
     return {"service": "rides", "pickup": pickup, "drop": drop, "vehicle": vehicle, "when": when}, "ok"
 
 
-async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, Any]], str]:
+def _stay_nights(trip: Dict[str, Any]) -> int:
+    a, b = _parse_day(trip.get("start_date")), _parse_day(trip.get("end_date"))
+    return (b - a).days if (a and b and b > a) else 0
+
+
+async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optional[Dict[str, Any]] = None,
+                            nights_ok: bool = False) -> Tuple[Optional[Dict[str, Any]], str]:
     """Validate and normalise the block the model produced. (None, reason) means: do not search.
-    `trip` is the search that ran before: details the model left out of a follow-up block are taken from it."""
+    `trip` is the search that ran before: details the model left out of a follow-up block are taken from it.
+    `nights_ok`: the visitor said how long the stay is, or was asked and answered. Without it a one-night hotel stay is only
+    the model's guess. Nothing the visitor asked for is changed quietly: a date that has passed, a stay without a length,
+    10+ guests or 30+ nights are refused, and the visitor is asked again."""
     if not isinstance(raw, dict):
         return None, "bad_block"
     service = str(raw.get("service") or "").strip().lower()
@@ -1377,7 +1399,7 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
     if service not in ("hotels", "flights", "buses", "rides"):
         return None, "bad_service"
     if service == "rides":
-        return _fix_ride_block(raw)
+        return _fix_ride_block(raw, today)
     raw = dict(raw)
     trip = trip if (trip and trip.get("service") == service) else None
     dest = _clean(raw.get("destination"), 80)
@@ -1389,10 +1411,14 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
     if not _mentioned(dest, user_text) and not (trip and _same_place(dest, trip.get("destination"))):
         return None, "city_not_mentioned"
 
+    gave_start, gave_end = raw.get("start_date") not in (None, ""), raw.get("end_date") not in (None, "")
     if trip:  # a follow-up: whatever the model left out stays as it was
         for key in ("start_date", "end_date", "travellers"):
             if raw.get(key) in (None, "") and trip.get(key) is not None:
                 raw[key] = trip[key]
+        moved = _parse_day(raw.get("start_date")) if (gave_start and not gave_end) else None
+        if moved and moved != _parse_day(trip.get("start_date")) and _stay_nights(trip):
+            raw["end_date"] = (moved + timedelta(days=_stay_nights(trip))).isoformat()    # only the first day moved: the stay keeps its length
         if raw.get("budget_tier") in (None, "") and raw.get("budget") in (None, ""):
             for key in ("budget_tier", "budget"):
                 if trip.get(key) is not None:
@@ -1402,18 +1428,35 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         if service == "hotels" and "area" not in raw and trip.get("area") and _same_place(dest, trip.get("destination")):
             raw["area"] = trip["area"]
 
-    try:
-        travellers = max(1, min(10, int(raw.get("travellers", 2))))
-    except (TypeError, ValueError):
-        travellers = 2
-    start = _parse_day(raw.get("start_date")) or today
+    travellers = 2
+    if raw.get("travellers") not in (None, ""):
+        try:
+            travellers = int(float(raw.get("travellers")))
+        except (TypeError, ValueError, OverflowError):
+            travellers = 2
+        else:
+            if not 1 <= travellers <= 10:
+                return None, "bad_travellers"
+    start = _parse_day(raw.get("start_date"))
+    if start is None:
+        return None, "no_date"
     if start < today:
-        start = today
+        return None, "past_date"
     end = _parse_day(raw.get("end_date"))
-    if not end or end < start or (end == start and service != "cabs"):
-        end = start if service == "cabs" else start + timedelta(days=1)
-    if (end - start).days > 30:
-        end = start + timedelta(days=30)
+    if service == "hotels":
+        if end is None or end <= start:
+            return None, "no_nights"
+        stay = (end - start).days
+        if stay > 30:
+            return None, "too_long"
+        same_dates = bool(trip) and trip.get("start_date") == start.isoformat() and trip.get("end_date") == end.isoformat()
+        if stay == 1 and not nights_ok and not same_dates:
+            return None, "no_nights"        # one night is what the model assumed: nobody said so
+    else:
+        if not end or end <= start:
+            end = start + timedelta(days=1)
+        if (end - start).days > 30:
+            end = start + timedelta(days=30)
 
     block: Dict[str, Any] = {"service": service, "destination": dest, "start_date": start.isoformat(),
                              "end_date": end.isoformat(), "travellers": travellers}
@@ -1457,27 +1500,28 @@ def _strip_partial_tag(reply: str) -> Tuple[str, bool]:
     return reply[:m.start()].rstrip(), True
 
 
-async def _postprocess_reply(reply: str, user_text: str, today: date, trip: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Check the <search> block inside the model's reply. Returns (text for the user, verified block or None)."""
+async def _postprocess_reply(reply: str, user_text: str, today: date, trip: Optional[Dict[str, Any]] = None,
+                             lang: str = "en", nights_ok: bool = False) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Check the <search> block inside the model's reply. Returns (text for the user, verified block or None).
+    When the block is refused the visitor gets the fixed question for that reason, in their language (`lang`: en | hinglish | hi)."""
     start = reply.lower().find("<search>")
     if start == -1:
         return _strip_partial_tag(reply)[0].strip(), None
     spoken = reply[:start].strip()
     m = _SEARCH_BLOCK.search(reply)
     if not m:
-        return (spoken or _ASK_CITY), None  # the block was cut off: never pass half a block on
+        return (spoken or cmem.fixed("ask_city", lang)), None  # the block was cut off: never pass half a block on
     try:
         raw = json.loads(m.group(1))
     except ValueError:
-        return _ASK_CITY, None
-    block, reason = await _fix_search_block(raw, user_text, today, trip)
+        return cmem.fixed("ask_city", lang), None
+    block, reason = await _fix_search_block(raw, user_text, today, trip, nights_ok)
     if block is None:
         logger.warning("search block rejected: %s", reason)
-        if reason in ("no_ride_places", "same_place"):
-            return _ASK_PLACES, None
-        return (_CITY_NOT_FOUND if reason == "city_not_found" else _ASK_CITY), None
+        return cmem.fixed(_REFUSAL_TEXT.get(reason, "ask_city"), lang), None
     if reason.startswith("area_not_found:"):
-        spoken = f"{spoken} ({reason.split(':', 1)[1]} ka exact location nahi mila, poore {block['destination']} ke hotels dikha raha hoon.)".strip()
+        note = cmem.fixed("area_missing", lang).format(area=reason.split(":", 1)[1], dest=block["destination"])
+        spoken = f"{spoken} {note}".strip()
     tag = f"<search>{json.dumps(block, ensure_ascii=False)}</search>"
     return (f"{spoken}\n{tag}" if spoken else tag), block
 
@@ -1560,15 +1604,24 @@ SYSTEM_PROMPT = (
     "Keep the <search> JSON block itself in English.\n\n"
     "STYLE RULES - STRICT:\n"
     "1. Every reply MAX 2 short sentences. Voice-friendly, conversational. No markdown, no bullet lists, no emoji dump, no ** bold **.\n"
-    "2. Ask ONLY ONE question at a time. Flow for hotels, flights and buses: pick service -> destination -> (origin ONLY for flights/buses, NEVER ask origin for hotels) -> dates -> travellers -> (HOTELS ONLY) budget -> search. "
-    "Flow for RIDES (bike taxi, auto, cab): pickup place -> drop place -> search; never ask dates, travellers or budget for a ride. Never jump ahead.\n"
+    "2. Ask ONLY ONE question at a time. Flow for HOTELS: pick service -> destination -> check-in date -> number of nights (or the check-out date) -> travellers -> budget -> search (NEVER ask origin for hotels). "
+    "Flow for flights and buses: pick service -> destination -> origin -> date -> travellers -> search. "
+    "Flow for RIDES (bike taxi, auto, cab): pickup place -> drop place -> search. For a ride ask for the pickup place first and the drop place next, never both in one question, and never ask dates, travellers or budget. Never jump ahead.\n"
     "3. Talk like a human friend - contractions, light interjections. Never sound robotic or like a travel brochure.\n"
     "4. Do NOT dump prices, itineraries, or options unprompted.\n"
     "5. You cannot book or confirm anything in chat. Never write a booking reference number.\n"
     "6. Never invent hotel names or prices. Real results are shown by the UI cards only.\n"
     "7. HOTEL BUDGET: after travellers are known, ask ONE short question offering three choices in the user's language: "
     "low/budget (sasta), medium (madhyam), or high/premium. Map the answer to budget_tier = low | medium | high. "
-    "If the user instead states a maximum price in rupees for the whole stay, put it in the block as a number called budget and omit budget_tier.\n\n"
+    "If the user instead states a maximum price in rupees for the whole stay, put it in the block as a number called budget and omit budget_tier.\n"
+    "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
+    "If it does not (a date when you asked for a place, a place when you asked for a number, a number when you asked for a date, or something unclear), say so in ONE short line "
+    "('That looks like a date, not a place.') and ask the SAME question again. A date, a time or a number is never a place name.\n"
+    "9. HOTEL STAY LENGTH: never assume it, not even one night. After the check-in date ask ONE short question for the number of nights or the check-out date. "
+    "end_date = start_date + nights. A range like '3 to 5 Nov' or 'aaj se 2 din' already gives it, so do not ask again. Treat 'N days' as N nights.\n"
+    "10. DATES: a date that has already passed is not accepted: say it has passed and ask for another one. A day and month without a year means its next upcoming occurrence "
+    "(if that day passed only a few days ago, it has passed). Write dates in the block as YYYY-MM-DD.\n"
+    "11. LIMITS: one search covers 1 to 10 travellers and 1 to 30 nights. If the visitor asks for more, say so in one short line and ask again.\n\n"
     "SEARCH TRIGGER - IMPORTANT:\n"
     "Once you have ALL required pieces (for hotels: service, destination, start_date, end_date, travellers, budget_tier; for flights/buses: service, origin, destination, start_date, end_date, travellers; for rides: service, pickup, drop), "
     "END your reply with EXACTLY this JSON block on a new line and NOTHING after it:\n"
@@ -1610,7 +1663,7 @@ def _system_prompt() -> str:
         f"\n\nTODAY'S DATE: {today.isoformat()} ({today.strftime('%A')}). 'aaj'/'today' = {today.isoformat()}, 'kal'/'tomorrow' = the next day. "
         "Never use dates in the past. "
         "For HOTELS you do NOT need origin: set origin equal to destination. "
-        "If user gives no end_date for hotels, use 1 night after start_date."
+        "A hotel block always needs a real end_date that the visitor gave or confirmed (rule 9): never fill it in on your own."
     )
 
 
@@ -1733,14 +1786,15 @@ async def _log_chat(user_text: str, reply: str, language: str) -> None:
 
 
 async def _answer(contents: list, system_text: str, named: str, today: date, trip: Optional[Dict[str, Any]],
-                  user_text: str, history_users: List[str]) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Ask the model, verify what it says, and make sure a reply that talks about results really searches for them."""
+                  user_text: str, lang: str = "en", nights_ok: bool = False) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Ask the model, verify what it says, and make sure a reply that talks about results really searches for them.
+    `lang` (en | hinglish | hi) is the language of the fixed replies; `nights_ok`: the length of a hotel stay was settled."""
     started = time.time()
     raw = await _gemini_reply(contents, system_text)
     if not raw.strip():
         return "I cannot reach the concierge right now. Please try again shortly.", None
     try:
-        reply, block = await _postprocess_reply(raw, named, today, trip)
+        reply, block = await _postprocess_reply(raw, named, today, trip, lang, nights_ok)
         low = raw.lower()
         has_tag = "<search>" in low
         spoken = (raw[: low.find("<search>")] if has_tag else _strip_partial_tag(raw)[0]).strip()
@@ -1762,20 +1816,19 @@ async def _answer(contents: list, system_text: str, named: str, today: date, tri
         ]
         second = await _gemini_reply(again, system_text)
         if second.strip():
-            reply2, block2 = await _postprocess_reply(second, named, today, trip)
+            reply2, block2 = await _postprocess_reply(second, named, today, trip, lang, nights_ok)
             if block2:
                 return reply2, block2
-        code = _lang_code(user_text, history_users)
         edited = cmem.quick_edit(trip, user_text)
         if edited:
-            line = cmem.fixed("updating", code)
-            reply3, block3 = await _postprocess_reply(f"{line}\n<search>{cmem.block_json(edited)}</search>", named, today, trip)
+            line = cmem.fixed("updating", lang)
+            reply3, block3 = await _postprocess_reply(f"{line}\n<search>{cmem.block_json(edited)}</search>", named, today, trip, lang, nights_ok)
             if block3:
                 return reply3, block3
-        return cmem.fixed("no_search", code), None
+        return cmem.fixed("no_search", lang), None
     except Exception:
         logger.exception("reply verification failed")
-        return _ASK_CITY, None
+        return cmem.fixed("ask_city", lang), None
 
 
 @api.post("/chat/stream")
@@ -1796,6 +1849,17 @@ async def chat_stream(req: ChatRequest, request: Request):
         results = cmem.clean_results(req.context)
         selection = cmem.clean_selection(req.context)
         user_text = _clean(req.message, 1000, strip_search_tag=True)
+        today = _today_ist()
+        lang = _lang_code(user_text, history_users)
+
+        # an answer that plainly does not fit the question just asked (a date given as a place, a date that has passed,
+        # 15 guests): say so and ask again, no need to bother the model
+        quick = cmem.pre_check(turns, user_text, today, lang)
+        if quick:
+            yield f"data: {json.dumps({'type': 'token', 'text': quick}, ensure_ascii=False)}\n\n"
+            _spawn(_log_chat(user_text, quick, req.language))
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            return
 
         name = cmem.text((req.context or {}).get("user"), 40) if isinstance(req.context, dict) else ""
         prefix = f"[Travel context: {json.dumps({'user': name}, ensure_ascii=False)}]\n" if name else ""
@@ -1809,12 +1873,11 @@ async def chat_stream(req: ChatRequest, request: Request):
             except Exception:
                 pass
         hint += _language_directive(user_text, history_users)
-        system_text = _system_prompt() + cmem.memory_prompt(trip, results, selection) + hint
+        system_text = _system_prompt() + cmem.memory_prompt(trip, results, selection) + cmem.input_note(user_text, today) + hint
         # the cities the visitor named so far (the model may only search for those) - or the city of the current trip
         named = " ".join(history_users + [user_text])
-        today = _today_ist()
 
-        reply, block = await _answer(contents, system_text, named, today, trip, user_text, history_users)
+        reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"

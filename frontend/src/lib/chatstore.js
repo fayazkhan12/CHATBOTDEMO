@@ -216,17 +216,34 @@ export function noteSelection(sel) {
 }
 
 // ------------------------------------------------------------------ search
+const HINGLISH = /\b(hai|hain|hoon|chahiye|chahie|chaiye|chhaiye|dikhao|dikha|dikhate|dikhata|mujhe|kya|nahi|nhi|karo|kro|batao|bataiye|mein|wala|wale|liye|kaise|kitna|kitne|kitni|aur|bhi|theek|thik|sahi|raha|rahe|rahi|dhoondh|dhundh|aap|aapka|aapke|kijiye|dijiye|bilkul|zaroor|sasta|madhyam|abhi|aaj|chaliye|accha|achha|acha|rukna|rukenge|honge|hoga|raat|kahan|kaunsi|kaunse)\b/i;
+
 const uiLang = (text) => {
   const t = text || "";
   if (/[ऀ-ॿ]/.test(t)) return "hi";
-  if (/\b(hai|hain|chahiye|chahie|dikhao|dikha|mujhe|kya|nahi|karo|batao|mein|wala|wale|liye|kaise|kitna|aur|bhi)\b/i.test(t)) return "hinglish";
+  if (HINGLISH.test(t)) return "hinglish";
   return "en";
 };
 
-const lastUserText = () => [...state.messages].reverse().find((m) => m.role === "user")?.text || "";
+// The line under a reply while a search runs is in the language of the visitor. What they typed last may say nothing
+// ("2", "ok", a single word), so the reply (which follows the visitor) and then their earlier messages are looked at too.
+function chatLang(replyText) {
+  const users = state.messages.filter((x) => x.role === "user").slice(-3).reverse();
+  const last = uiLang(users[0]?.text);
+  if (last !== "en") return last;
+  const own = uiLang(replyText);
+  if (own !== "en") return own;
+  if (String(users[0]?.text || "").trim().split(/\s+/).length <= 2) {
+    for (const m of users.slice(1)) {
+      const l = uiLang(m.text);
+      if (l !== "en") return l;
+    }
+  }
+  return "en";
+}
 
 export async function runSearch(intent, replyId) {
-  const lang = uiLang(lastUserText());
+  const lang = chatLang(state.messages.find((m) => m.id === replyId)?.text);
   if (intent.service === "rides") return runRideQuote(intent, replyId, lang);
   patchMessage(replyId, { searching: intent.service, noResults: false, interrupted: undefined, lang });
   try {

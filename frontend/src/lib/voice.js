@@ -84,6 +84,9 @@ const GREETINGS = new Set([
   "\u0928\u092e\u0938\u094d\u0924\u0947",
 ]);
 
+// Sounds the recogniser hears when nobody said anything useful.
+const NOISE = new Set(["hmm", "hm", "mm", "mmm", "um", "umm", "uh", "uhh", "ah", "aah", "oh", "er", "huh", "so", "and", "the", "a", "ha", "na"]);
+
 export function normalizeUtterance(text) {
   return String(text || "")
     .replace(/[\u0964\u0965.,!?;:"']+/g, " ")
@@ -92,16 +95,22 @@ export function normalizeUtterance(text) {
 }
 
 // active = a real conversation is already going on (not just the greeting).
+// The visitor tapped the mic on purpose, so a single real word is an answer: a city ("Jaipur"), a number ("2"),
+// a service ("hotels"). Only noise is dropped, and "yes / no / ok / first" count only when something was asked.
 export function shouldSendUtterance(text, active) {
   const t = normalizeUtterance(text);
-  if (t.length < 2 || t.length > 500) return false;
+  if (!t || t.length > 500) return false;
   const words = t.toLowerCase().split(" ");
   if (words.length === 1) {
     const w = words[0];
+    if (NOISE.has(w)) return false;
     if (GREETINGS.has(w)) return true;
-    return !!active && REPLY_WORDS.has(w);
+    if (REPLY_WORDS.has(w)) return !!active;
+    return w.length >= 2 || /\d/.test(w);
   }
-  return !words.every((w) => FILLERS.has(w));
+  if (words.every((w) => NOISE.has(w))) return false;
+  if (!active && words.every((w) => FILLERS.has(w))) return false;
+  return true;
 }
 
 // ---- the engine ----

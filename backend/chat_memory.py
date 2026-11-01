@@ -287,7 +287,7 @@ FOLLOW_UP_RULES = (
     "- When the visitor changes ANY detail (budget, guests, dates, city, area, vehicle) or asks to see options again, keep every other detail of the current trip "
     "and end your reply with a COMPLETE new <search> block, in the same reply. Never ask 'shall I show them?', 'which city?' or 'which dates?' when the memory above already has the answer.\n"
     "- cheaper / sasta / budget -> budget_tier low. normal / madhyam -> medium. premium / luxury / best / costly -> high. 'N guests / log / people' -> travellers N. "
-    "A new city -> new destination with the same dates, guests and budget, and NO area.\n"
+    "A new city -> new destination with the same dates, guests and budget, and NO area. If only the check-in date changes, keep the same number of nights.\n"
     "- A question about the results on screen (which is cheapest, best rated, closest, 'the second one') is answered from the numbered list above in one or two sentences, with NO new <search> block. "
     "Never name a result that is not in the list. For photos, rooms or exact prices tell the visitor to tap View on that card.\n"
     "- Thanks, ok, hello and other small talk: answer in one short sentence, no <search> block, and do not repeat the old search.\n"
@@ -429,6 +429,189 @@ def quick_edit(trip: Optional[Dict[str, Any]], user_text: str) -> Optional[Dict[
     return edited if changed else None
 
 
+# ------------------------------------------------------------------ what the visitor's last message really is
+# A date typed where a place was asked for ("31/10/26" after "where should the bike pick you up?") is not an answer.
+# Neither is a date that has passed, or a number of guests or nights the search cannot do. The model used to say
+# "Got it" to all of these, so the app now looks at the message itself and answers before (or after) the model.
+_MONTHS3 = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+_MON = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_D_ISO = re.compile(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)")
+_D_DMON = re.compile(r"(?<!\d)(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?" + _MON + r"\b\.?(?:\s*,?\s*(\d{4}))?", re.I)
+_D_MOND = re.compile(r"\b" + _MON + r"\b\.?\s*(\d{1,2})(?:st|nd|rd|th)?\b(?:\s*,?\s*(\d{4}))?", re.I)
+_D_NUMY = re.compile(r"(?<!\d)(\d{1,2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{4}|\d{2})(?!\d)")
+_D_NUM = re.compile(r"(\d{1,2})\s*[/\-.]\s*(\d{1,2})")           # day/month: a date only when it is the whole message
+_TIME = re.compile(r"(?<!\d)\d{1,2}\s*:\s*\d{2}(?:\s*(?:am|pm))?\b|(?<!\d)\d{1,2}\s*(?:am|pm|baje|bje|o'?clock|hrs?|hours?)\b", re.I)
+_WHENW = re.compile(
+    r"\b(?:now|abhi|turant|asap|jaldi|today|aaj|aj|tonight|tomorrow|tmrw|kal|parso|day after tomorrow|morning|subah|subha|afternoon|dopahar|evening|shaam|sham|night|raat|noon)\b"
+    r"|आज|कल|परसों|सुबह|शाम|रात|अभी", re.I)
+_FILLER = re.compile(
+    r"\b(?:on|from|to|till|until|upto|by|at|in|ko|se|tak|ke|ka|ki|liye|for|the|of|date|dates|tarikh|check-?in|check-?out|checkin|checkout|please|plz|pls|ji|hai|h|"
+    r"chahiye|chahie|chaiye|chhaiye|only|bas|around|about|approx|ek|a)\b|तारीख|को|से|तक|के|लिए|है|चाहिए", re.I)
+_UNITS = re.compile(r"\b(?:guests?|people|persons?|pax|adults?|log|logo|travell?ers?|members?|nights?|raat|raate|din|dino|days?)\b|लोग|रात|दिन", re.I)
+
+_NUMW = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|ek|do|teen|char|chaar|paanch|panch|chhe|chhah|saat|aath|nau|das)"
+_CUE_NIGHTS = re.compile(
+    r"\b" + _NUMW + r"[\s-]*(?:nights?|nites?|raat|raate|raaton|rat|din|dino|days?)\b|\bovernight\b|\b(?:a|single|one) night\b|\bweekend\b|\bweek\b|\bhafte?\b|\bhafta\b|\bcheck[- ]?out\b|\bcheckout\b"
+    r"|[0-9०-९]+\s*(?:रात|दिन)|(?:एक|दो|तीन|चार|पाँच|पांच|छह|सात|आठ|नौ|दस)\s*(?:रात|दिन)|हफ्ते|सप्ताह|चेक-?आउट", re.I)
+_RANGE = re.compile(
+    r"(?<!\d)\d{1,2}(?:st|nd|rd|th)?\s*(?:-|–|to|se|till|until|tak)\s*\d{1,2}(?:st|nd|rd|th)?\s*" + _MON + r"\b"
+    r"|\b" + _MON + r"\b\.?\s*\d{1,2}(?:st|nd|rd|th)?\s*(?:-|–|to|se|till|until|tak)\s*\d{1,2}(?!\d)", re.I)
+
+# what the assistant's last question was about
+_Q_PLACE = re.compile(
+    r"\bpick(?:ed)?[- ]?(?:you |me |us )?up\b|\bpickup\b|\bdrop(?:ped|[- ]?off)?\b|\bwhere\b|\bwhich (?:city|place|town|area|location)\b|\bwhat(?:'s| is)? (?:the )?(?:city|place|location|destination)\b"
+    r"|\bkahan\b|\bkahaan\b|\bkaha\b|\bkidhar\b|\bkis (?:shehar|sheher|jagah|city)\b|\bkaun ?s[ei] (?:shehar|sheher|jagah|city)\b|\bshehar\b|\bsheher\b|\bjagah\b|\bdestination\b"
+    r"|कहाँ|कहां|किस (?:शहर|जगह)|कौन ?से? (?:शहर|जगह)|शहर|जगह", re.I)
+_Q_WHEN_ANY = re.compile(
+    r"\b(?:date|dates|day|days|night|nights|when|kab|din|raat|tarikh|tareekh|check[- ]?in|check[- ]?out|checkin|checkout)\b|तारीख|कब|रात|दिन", re.I)
+_Q_NIGHTS = re.compile(
+    r"\bhow many (?:nights?|days?)\b|\bhow long\b|\bnumber of (?:nights?|days?)\b|\bkitni (?:raat|rat|raate|raaton|din)\b|\bkitne (?:din|dino|raat)\b|\bcheck[- ]?out\b|\bkab tak\b|\b(?:till|until) when\b"
+    r"|कितनी रात|कितने दिन|चेक-?आउट|कब तक", re.I)
+_SENT_SPLIT = re.compile(r"(?<=[.!?।？])\s+")
+
+
+def _mk(y: int, m: int, d: int) -> Optional[date]:
+    try:
+        return date(y, m, d)
+    except ValueError:
+        return None
+
+
+def _resolve(day: int, month: int, year: Optional[str], today: date) -> Optional[date]:
+    """A written date. Without a year it is the next one that is not long gone: a day that passed a few days ago stays in the past."""
+    if year:
+        y = int(year)
+        return _mk(y + 2000 if y < 100 else y, month, day)
+    this = _mk(today.year, month, day)
+    if this is None:
+        return None
+    if this < today and (today - this).days > 45:
+        return _mk(today.year + 1, month, day) or this
+    return this
+
+
+def _find_dates(t: str, today: date) -> Tuple[List[date], str]:
+    """Every date written in the (lower-case) text, day first as in India, and the text with those dates cut out."""
+    found: List[date] = []
+    work = t
+
+    def take(pattern: Any, build: Any) -> None:
+        nonlocal work
+
+        def sub(m: Any) -> str:
+            got = build(m)
+            if got is None:
+                return m.group(0)
+            found.append(got)
+            return " "
+        work = pattern.sub(sub, work)
+
+    take(_D_ISO, lambda m: _mk(int(m[1]), int(m[2]), int(m[3])))
+    take(_D_DMON, lambda m: _resolve(int(m[1]), _MONTHS3[m[2].lower()[:3]], m[3], today))
+    take(_D_MOND, lambda m: _resolve(int(m[2]), _MONTHS3[m[1].lower()[:3]], m[3], today))
+    take(_D_NUMY, lambda m: _resolve(int(m[1]), int(m[2]), m[3], today))
+    return found, work
+
+
+def classify(message: str, today: date) -> Dict[str, Any]:
+    """What a short message is. kind: "date", "past_date" (a date before today), "time", "number" or "text" (anything else)."""
+    out: Dict[str, Any] = {"kind": "text", "date": None, "number": None}
+    t = " ".join(str(message or "").lower().split())
+    if not t or len(t) > 60:
+        return out
+    m = _D_NUM.fullmatch(t)
+    if m and 1 <= int(m[2]) <= 12:
+        d = _resolve(int(m[1]), int(m[2]), None, today)
+        if d:
+            return {"kind": "past_date" if d < today else "date", "date": d, "number": None}
+    dates, rest = _find_dates(t, today)
+    had_time = bool(_TIME.search(rest))
+    rest = _TIME.sub(" ", rest)
+    had_when = bool(_WHENW.search(rest))
+    rest = _FILLER.sub(" ", _WHENW.sub(" ", rest))
+    rest = re.sub(r"[\s,.:;!?\-–—/()'\"]+", " ", rest).strip()
+    if not rest:
+        if dates:
+            return {"kind": "past_date" if all(d < today for d in dates) else "date", "date": dates[0], "number": None}
+        if had_time:
+            return {**out, "kind": "time"}
+        if had_when:
+            return {**out, "kind": "date"}
+        return out
+    alone = _UNITS.sub(" ", rest).strip()
+    if not dates and re.fullmatch(r"\d{1,3}", alone):
+        return {**out, "kind": "number", "number": int(alone)}
+    return out
+
+
+def not_a_place(name: str, today: date) -> bool:
+    """True for a "place" that is really a date, a time or a number (or has no letters at all)."""
+    s = str(name or "")
+    return not any(ch.isalpha() for ch in s) or classify(s, today)["kind"] != "text"
+
+
+def questions(model_text: str) -> List[str]:
+    """The questions in one of the assistant's replies, in order (the <search> block and a cut-off tag are ignored)."""
+    body = re.sub(r"<search>.*?</search>", " ", str(model_text or ""), flags=re.S | re.I)
+    body = re.sub(r"<[^>]*$", "", body)
+    parts = [p.strip() for p in _SENT_SPLIT.split(" ".join(body.split())) if p.strip()]
+    return [p[:220] for p in parts if p.endswith("?") or p.endswith("？")]
+
+
+def last_question(model_text: str) -> str:
+    qs = questions(model_text)
+    return qs[-1] if qs else ""
+
+
+def pre_check(turns: List[Tuple[str, str]], user_text: str, today: date, lang: str) -> Optional[str]:
+    """A ready reply when the visitor's message plainly does not fit the question the assistant just asked
+    (a date or a number given as a place, a date that has passed, 15 guests, 90 nights). None: let the model answer."""
+    if not turns or turns[-1][0] != "model":
+        return None
+    ask = last_question(turns[-1][1])
+    if not ask:
+        return None
+    c = classify(user_text, today)
+    kind, n = c["kind"], c["number"]
+    if kind == "text":
+        return None
+    about_place = bool(_Q_PLACE.search(ask)) and not _Q_WHEN_ANY.search(ask) and not _Q_GUESTS.search(ask)
+    if about_place and kind in ("date", "past_date", "time"):
+        return f"{fixed('not_place_date', lang)} {ask}"
+    if about_place and kind == "number":
+        return f"{fixed('not_place', lang)} {ask}"
+    if kind == "past_date" and _Q_WHEN_ANY.search(ask):
+        return f"{fixed('date_passed', lang)} {ask}"
+    if kind == "number" and n is not None:
+        if _Q_GUESTS.search(ask) and not 1 <= n <= 10:
+            return fixed("bad_travellers", lang)
+        if _Q_NIGHTS.search(ask) and not 1 <= n <= 30:
+            return fixed("bad_nights", lang)
+    return None
+
+
+def input_note(user_text: str, today: date) -> str:
+    """Facts about the latest message for the model: it names a date that has already passed (and no date that has not)."""
+    low = " ".join(str(user_text or "").lower().split())[:300]
+    dates, _ = _find_dates(low, today)
+    if not dates or any(d >= today for d in dates):
+        return ""
+    names = ", ".join(_nice(d.isoformat()) for d in sorted(set(dates)))
+    return ("\n\nINPUT CHECK (done by the app, trust it): the visitor's latest message has the date " + names + ", which is already in the past "
+            "(today is " + _nice(today.isoformat()) + "). Do not search with it: say in one short line that it has passed and ask for another date.")
+
+
+def nights_known(turns: List[Tuple[str, str]], user_text: str, today: date) -> bool:
+    """Has the length of the stay been settled in this conversation: said by the visitor, or asked for (and so answered)?"""
+    if any(role == "model" and any(_Q_NIGHTS.search(q) for q in questions(body)) for role, body in turns):
+        return True
+    for body in [b for r, b in turns if r == "user"] + [str(user_text or "")]:
+        low = " ".join(body.lower().split())[:400]
+        if _CUE_NIGHTS.search(low) or _RANGE.search(low) or len(_find_dates(low, today)[0]) >= 2:
+            return True
+    return False
+
+
 # ------------------------------------------------------------------ words for the few fixed replies we write ourselves
 FIXED = {
     "updating": {
@@ -440,6 +623,86 @@ FIXED = {
         "en": "Tell me what to change: dates, guests, budget or city.",
         "hinglish": "Bataiye kya badalna hai: dates, log, budget ya shehar.",
         "hi": "बताइए क्या बदलना है: तारीख, लोग, बजट या शहर।",
+    },
+    "ask_city": {
+        "en": "Which city should I look in? Please tell me the city name again.",
+        "hinglish": "Kaunse shehar ke liye dekhna hai? Shehar ka naam ek baar dobara bata dijiye.",
+        "hi": "किस शहर के लिए देखना है? शहर का नाम एक बार फिर बता दीजिए।",
+    },
+    "city_not_found": {
+        "en": "I could not find that city. Please check the spelling and tell me again.",
+        "hinglish": "Mujhe wo shehar nahi mila, spelling ek baar check karke dobara bata dijiye.",
+        "hi": "मुझे वह शहर नहीं मिला, कृपया स्पेलिंग जाँचकर दोबारा बताइए।",
+    },
+    "ask_places": {
+        "en": "Where from and where to? Please tell me the pickup place and the drop place.",
+        "hinglish": "Kahan se kahan jana hai? Pickup aur drop ki jagah bata dijiye.",
+        "hi": "कहाँ से कहाँ जाना है? पिकअप और ड्रॉप की जगह बता दीजिए।",
+    },
+    "same_place": {
+        "en": "Pickup and drop are the same place. Where would you like to go?",
+        "hinglish": "Pickup aur drop ek hi jagah hai. Aapko kahan jana hai?",
+        "hi": "पिकअप और ड्रॉप एक ही जगह है। आपको कहाँ जाना है?",
+    },
+    "bad_place": {
+        "en": "That does not look like a place name. Please tell me the pickup and drop places, like Jaipur Airport to Hawa Mahal.",
+        "hinglish": "Yeh jagah ka naam nahi lag raha. Pickup aur drop ki jagah bataiye, jaise Jaipur Airport se Hawa Mahal.",
+        "hi": "यह जगह का नाम नहीं लग रहा। पिकअप और ड्रॉप की जगह बताइए, जैसे जयपुर एयरपोर्ट से हवा महल।",
+    },
+    "not_place_date": {
+        "en": "That looks like a date or time, not a place.",
+        "hinglish": "Yeh date ya time lag raha hai, jagah ka naam nahi.",
+        "hi": "यह तारीख या समय लग रहा है, जगह का नाम नहीं।",
+    },
+    "not_place": {
+        "en": "That does not look like a place name.",
+        "hinglish": "Yeh jagah ka naam nahi lag raha.",
+        "hi": "यह जगह का नाम नहीं लग रहा।",
+    },
+    "date_passed": {
+        "en": "That date has already passed.",
+        "hinglish": "Woh date toh nikal chuki hai.",
+        "hi": "वह तारीख तो निकल चुकी है।",
+    },
+    "past_date": {
+        "en": "That date has already passed. Which date do you want?",
+        "hinglish": "Woh date toh nikal chuki hai. Kaunsi date chahiye?",
+        "hi": "वह तारीख तो निकल चुकी है। कौन सी तारीख चाहिए?",
+    },
+    "ask_date": {
+        "en": "Which date should I search for?",
+        "hinglish": "Kaunsi date ke liye dekhna hai?",
+        "hi": "किस तारीख के लिए देखना है?",
+    },
+    "ask_nights": {
+        "en": "How many nights will you stay? You can also tell me the check-out date.",
+        "hinglish": "Kitni raat rukna hai? Check-out date bhi bata sakte hain.",
+        "hi": "कितनी रात रुकना है? चेक-आउट की तारीख भी बता सकते हैं।",
+    },
+    "bad_nights": {
+        "en": "I can search stays of 1 to 30 nights. How many nights?",
+        "hinglish": "Main 1 se 30 raat tak ki stay dekh sakta hoon. Kitni raat?",
+        "hi": "मैं 1 से 30 रात तक की स्टे देख सकता हूँ। कितनी रात?",
+    },
+    "bad_travellers": {
+        "en": "I can search for 1 to 10 guests at a time. How many guests?",
+        "hinglish": "Ek baar mein 1 se 10 log tak dekh sakta hoon. Kitne log honge?",
+        "hi": "एक बार में 1 से 10 लोग देख सकता हूँ। कितने लोग होंगे?",
+    },
+    "past_time": {
+        "en": "That pickup time has already passed. What time should I book the ride for?",
+        "hinglish": "Woh time toh nikal chuka hai. Ride kis time ki chahiye?",
+        "hi": "वह समय तो निकल चुका है। राइड किस समय की चाहिए?",
+    },
+    "far_time": {
+        "en": "I can schedule a ride up to 30 days ahead. Which day and time?",
+        "hinglish": "Main 30 din aage tak ki ride schedule kar sakta hoon. Kaunsa din aur time?",
+        "hi": "मैं 30 दिन आगे तक की राइड शेड्यूल कर सकता हूँ। कौन सा दिन और समय?",
+    },
+    "area_missing": {
+        "en": "(I could not find the exact spot for {area}, so I am showing hotels across {dest}.)",
+        "hinglish": "({area} ka exact location nahi mila, poore {dest} ke hotels dikha raha hoon.)",
+        "hi": "({area} की सटीक जगह नहीं मिली, इसलिए पूरे {dest} के होटल दिखा रहा हूँ।)",
     },
 }
 

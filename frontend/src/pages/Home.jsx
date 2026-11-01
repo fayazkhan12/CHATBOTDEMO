@@ -9,38 +9,7 @@ import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-
-// --- voice helpers ---
-function pickBestVoice(script) {
-  const voices = window.speechSynthesis?.getVoices() || [];
-  if (!voices.length) return null;
-  const want = script === "hi" ? ["hi-IN"] : ["en-IN", "en-GB", "en-US"];
-  // prefer Google / Microsoft Neural voices
-  for (const lang of want) {
-    const neural = voices.find(v => v.lang === lang && /google|neural|natural|online/i.test(v.name));
-    if (neural) return neural;
-    const any = voices.find(v => v.lang === lang);
-    if (any) return any;
-  }
-  return voices[0];
-}
-
-function speak(text, { onEnd } = {}) {
-  if (!("speechSynthesis" in window) || !text) { onEnd?.(); return; }
-  window.speechSynthesis.cancel();
-  const hasDev = /[\u0900-\u097F]/.test(text);
-  const script = hasDev ? "hi" : "en";
-  const u = new SpeechSynthesisUtterance(text);
-  const v = pickBestVoice(script);
-  if (v) u.voice = v;
-  u.lang = v?.lang || (hasDev ? "hi-IN" : "en-IN");
-  u.rate = 0.98;
-  u.pitch = 1.02;
-  u.volume = 1;
-  u.onend = () => onEnd?.();
-  u.onerror = () => onEnd?.();
-  window.speechSynthesis.speak(u);
-}
+import { speak, stopSpeaking as cancelSpeech } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
 const LABELS = {
@@ -194,6 +163,11 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
   </div>
 );
 
+const MAX_AUTO_TURNS = 8;   // after this many questions answered by voice in a row, the visitor taps the mic again
+
+// Does the assistant's reply end by asking the visitor something?
+const asksQuestion = (text) => /[?\uFF1F]$/.test(String(text || "").trim().replace(/[)"'\u201d\]]+$/, ""));
+
 export default function Home() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
@@ -208,6 +182,11 @@ export default function Home() {
   const firstScroll = useRef(true);
   const voiceModeRef = useRef(false); // true for current send if invoked via mic
   const openCardRef = useRef(null);
+  const voiceSessionRef = useRef(false);   // the visitor started voice mode and has not stopped it
+  const autoTurnsRef = useRef(0);          // how many times the mic opened by itself after a question
+  const speakIdRef = useRef(0);            // only the newest spoken reply may open the mic again
+  const startListeningRef = useRef(null);
+  const voiceLangRef = useRef("en-IN");
 
   // the chat belongs to one person: a different account (or logging out) starts a clean chat.
   // Wait until we know who is logged in, or a reload would look like a logout.
@@ -238,7 +217,9 @@ export default function Home() {
   const retry = (msg) => retrySearch(msg.id);
 
   const newChat = () => {
-    window.speechSynthesis?.cancel();
+    speakIdRef.current += 1;
+    voiceSessionRef.current = false;
+    cancelSpeech();
     if (clearChat()) {
       toast("New chat started", { action: { label: "Undo", onClick: () => undoClear() }, duration: 6000 });
     }
@@ -257,8 +238,17 @@ export default function Home() {
     }
     const clean = out ? out.clean : "";
     if (voiceModeRef.current && voiceOutput && clean) {
+      const id = speakIdRef.current + 1;
+      speakIdRef.current = id;
       setSpeakingReply(true);
-      speak(clean, { onEnd: () => setSpeakingReply(false) });
+      speak(clean, {
+        preferred: voiceLangRef.current,
+        onEnd: (spoken) => {
+          if (id !== speakIdRef.current) return;      // a newer reply, the Stop button or the mic took over
+          setSpeakingReply(false);
+          if (spoken && voiceSessionRef.current && asksQuestion(clean)) listenAgain();
+        },
+      });
     }
     voiceModeRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,6 +256,7 @@ export default function Home() {
 
   // ---- hands-free voice mode ----
   const [voiceLang, setVoiceLang] = useState(pickDefaultLang);
+  voiceLangRef.current = voiceLang;
   const [interim, setInterim] = useState("");
   const [voiceNote, setVoiceNote] = useState("");
   const voiceRef = useRef(null);
@@ -312,31 +303,52 @@ export default function Home() {
   const stopVoice = useCallback((reason) => {
     if (voiceRef.current) voiceRef.current.destroy();
     voiceRef.current = null;
-    if (reason !== "done") pendingVoice.current = "";
+    if (reason !== "done") { pendingVoice.current = ""; voiceSessionRef.current = false; }   // silence, errors and the stop button end voice mode
     setListening(false);
     setInterim("");
     if (reason !== "done") setVoiceNote(reason ? describeStop(reason) : "");
   }, []);
 
-  const toggleVoice = () => {
-    if (listening) { stopVoice(); return; }
+  const startListening = useCallback(() => {
     setVoiceNote("");
     const eng = createVoiceEngine({
-      lang: voiceLang,
+      lang: voiceLangRef.current,
       onInterim: setInterim,
       onFinal: onVoiceFinal,
       onStop: stopVoice,
       once: true,
       idleMs: 12000,
     });
-    if (!eng) { setVoiceNote(describeStop("unsupported")); return; }
+    if (!eng) { voiceSessionRef.current = false; setVoiceNote(describeStop("unsupported")); return; }
     voiceRef.current = eng;
     eng.start();
     setListening(true);
+  }, [onVoiceFinal, stopVoice]);
+  startListeningRef.current = startListening;
+
+  // The assistant just asked something by voice and finished speaking: open the mic for the answer.
+  const listenAgain = useCallback(() => {
+    if (!voiceSessionRef.current || voiceRef.current) return;
+    if (autoTurnsRef.current >= MAX_AUTO_TURNS) { voiceSessionRef.current = false; return; }
+    autoTurnsRef.current += 1;
+    setTimeout(() => {      // a short pause, so the end of the spoken question is not heard as the answer
+      if (voiceSessionRef.current && !voiceRef.current && !sendingRef.current && startListeningRef.current) startListeningRef.current();
+    }, 450);
+  }, []);
+
+  const toggleVoice = () => {
+    if (listening) { voiceSessionRef.current = false; stopVoice(); return; }
+    cancelSpeech();                       // tapping the mic while the assistant talks: it stops and listens
+    speakIdRef.current += 1;
+    setSpeakingReply(false);
+    voiceSessionRef.current = true;
+    autoTurnsRef.current = 0;
+    startListening();
   };
 
   const changeVoiceLang = (code) => {
     setVoiceLang(code);
+    voiceLangRef.current = code;
     saveLang(code);
     if (voiceRef.current) voiceRef.current.setLang(code);
   };
@@ -347,10 +359,12 @@ export default function Home() {
   }, [speakingReply]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => { if (voiceRef.current) voiceRef.current.destroy(); }, []);
+  useEffect(() => () => { voiceSessionRef.current = false; speakIdRef.current += 1; cancelSpeech(); if (voiceRef.current) voiceRef.current.destroy(); }, []);
 
   const stopSpeaking = () => {
-    window.speechSynthesis?.cancel();
+    speakIdRef.current += 1;              // the reply that was being spoken must not open the mic when it is cut short
+    voiceSessionRef.current = false;
+    cancelSpeech();
     setSpeakingReply(false);
   };
 
@@ -450,7 +464,7 @@ export default function Home() {
 
       {listening && (
         <div className="voice-live" role="status">
-          <span className="voice-dot" /> Listening... speak now. The mic turns off by itself.
+          <span className="voice-dot" /> Listening... speak now. Tap the mic to stop.
         </div>
       )}
       {voiceNote && <div className="voice-note" role="status">{voiceNote}</div>}

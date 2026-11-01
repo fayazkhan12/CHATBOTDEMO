@@ -30,7 +30,9 @@ export default function RideMap({ pickup, drop, route, vehicle, vehicleKind = "c
   // create / destroy the map
   useEffect(() => {
     const m = L.map(el.current, { zoomControl: false, attributionControl: true, scrollWheelZoom: true, tap: true }).setView([22.9, 79.5], 4);
-    L.control.zoom({ position: "bottomright" }).addTo(m);
+    // top right: on a laptop the map fills the right-hand column down to the corner of the window, which is where the
+    // floating voice button sits, so zoom buttons in the bottom-right corner would be hidden under it
+    L.control.zoom({ position: "topright" }).addTo(m);
     let errors = 0;
     const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>',
