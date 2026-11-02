@@ -16,8 +16,10 @@ export default function ActiveRideBar() {
     let live = true;
     let timer = null;
     const tick = async () => {
-      try { const r = await rideApi.active(); if (live) setRide(r); } catch { /* the bar is a convenience */ }
-      if (live) timer = setTimeout(tick, document.hidden ? 60000 : 12000);
+      let r = null;
+      try { r = await rideApi.active(); if (live) setRide(r); } catch { /* the bar is a convenience */ }
+      // no ride going on: look again only now and then (and when the page is changed); a ride going on: keep the bar fresh
+      if (live) timer = setTimeout(tick, document.hidden ? 120000 : r ? 12000 : 90000);
     };
     tick();
     return () => { live = false; clearTimeout(timer); };
