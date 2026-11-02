@@ -155,11 +155,11 @@ export default function Detail() {
 
   useVoiceDock({
     maxTurns: 5,
-    onStart: () => ({ say: 'Say "reserve now" to book this one, or "back" to see other options.', listen: true }),
+    onStart: () => ({ say: "Want me to reserve this one? Just say reserve now, or say back to see the other options.", listen: true }),
     onText: (said) => {
       if (isBackIntent(said)) { goBack(); return { listen: false }; }
-      if (isReserveIntent(said)) { markVoiceFlow(); book(); return { say: "Reserving this for you.", listen: false }; }
-      return { say: 'Sorry. Say "reserve now" or "back".', listen: true };
+      if (isReserveIntent(said)) { markVoiceFlow(); book(); return { say: "Alright, reserving it for you.", listen: false }; }
+      return { say: "Sorry, I didn't get that. Say reserve now, or back.", listen: true };
     },
   });
 

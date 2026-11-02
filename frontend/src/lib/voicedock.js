@@ -1,6 +1,7 @@
 // A small floating mic for the Detail and Checkout pages.
 // Plain DOM so it needs no changes to the page markup.
 import { createVoiceEngine, describeStop, pickDefaultLang } from "./voice";
+import { speak, stopSpeaking, unlockAudio } from "./tts.js";
 import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress, phonePartial, emailPartial, explainCity, explainAddress } from "./voicecmd";
 
 const FLOW_KEY = "dw_voice_flow";
@@ -27,6 +28,16 @@ export function takeReserveFlow() {
 function clearVoiceFlow() {
   try { window.sessionStorage.removeItem(FLOW_KEY); } catch (e) { /* ignore */ }
 }
+
+// Never the same acknowledgement twice in a row: a person does not say "Got it" after every answer.
+const lastPick = {};
+export function pick(key, list) {
+  let i = Math.floor(Math.random() * list.length);
+  if (list.length > 1 && i === lastPick[key]) i = (i + 1) % list.length;
+  lastPick[key] = i;
+  return list[i];
+}
+const GOT_IT = ["Got it.", "Okay.", "Thanks.", "Perfect.", "Alright."];
 
 const MIC_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/></svg>';
 
@@ -85,11 +96,12 @@ function createDock(getConfig) {
     active = false;
     clearTimeout(timer);
     clearTimeout(speakTimer);
-    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    stopSpeaking();
     stopEngine();
     setNote(msg || "");
   }
 
+  // The dock talks with the same voice as the chat (natural when it is on, the device's own otherwise).
   function say(text, cb, id) {
     let done = false;
     const fin = () => {
@@ -98,21 +110,11 @@ function createDock(getConfig) {
       clearTimeout(speakTimer);
       if (alive && id === runId) cb();
     };
+    speakTimer = setTimeout(fin, 40000);        // speak() ends by itself; this only guards a voice that got stuck
     try {
-      const synth = window.speechSynthesis;
-      if (!synth || typeof window.SpeechSynthesisUtterance === "undefined") {
-        speakTimer = setTimeout(fin, 900);
-        return;
-      }
-      synth.cancel();
-      const u = new window.SpeechSynthesisUtterance(text);
-      u.lang = "en-IN";
-      u.onend = fin;
-      u.onerror = fin;
-      speakTimer = setTimeout(fin, 2500 + text.length * 85);
-      synth.speak(u);
+      speak(text, { preferred: pickDefaultLang(), onEnd: fin });
     } catch (e) {
-      speakTimer = setTimeout(fin, 900);
+      fin();
     }
   }
 
@@ -120,7 +122,7 @@ function createDock(getConfig) {
     if (!alive || id !== runId) return;
     if (!turn) { active = false; return; }
     const next = () => {
-      if (turn.listen) timer = setTimeout(() => listen(turn.lang, id, turn.silenceMs), 450);
+      if (turn.listen) timer = setTimeout(() => listen(turn.lang, id, turn.silenceMs), 300);
       else active = false;
     };
     if (turn.say) { setNote(turn.say); say(turn.say, next, id); } else next();
@@ -140,7 +142,7 @@ function createDock(getConfig) {
       lang: lang || pickDefaultLang(),
       once: true,
       idleMs: 12000,
-      silenceMs: silenceMs || 1500,
+      silenceMs: silenceMs || 1100,
       onInterim: (t) => { if (t) setNote(`\u201c${t}\u201d`); },
       onFinal: (text) => {
         const c = getConfig() || {};
@@ -148,7 +150,7 @@ function createDock(getConfig) {
         try {
           turn = c.onText ? c.onText(text) : null;
         } catch (e) {
-          turn = { say: "Something went wrong. Please try again.", listen: false };
+          turn = { say: "Sorry, something went wrong. Could you try that again?", listen: false };
         }
         runTurn(turn, id);
       },
@@ -167,6 +169,7 @@ function createDock(getConfig) {
   }
 
   function start() {
+    unlockAudio();             // this is a tap: the voice may talk from now on, also when nobody is tapping (Safari, iPhone)
     stopAll("");
     const id = runId;
     active = true;
@@ -237,11 +240,11 @@ export function routeChanged() {
 // ---- guided form filling ----
 
 export const CHECKOUT_VOICE_FIELDS = [
-  { key: "name", ask: "What is your full name?", retry: "Sorry, please say your full name again.", parse: parseName, words: ["name", "naam"] },
-  { key: "phone", ask: "Your mobile number, digit by digit.", retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: parsePhone, dictation: true, partial: phonePartial, words: ["phone", "mobile", "number", "contact"] },
-  { key: "email", ask: "Your email address. Say at the rate and dot where needed.", retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial, words: ["email", "mail"] },
-  { key: "city", ask: "Which city? Say skip to skip.", retry: "Please say the city name, or say skip.", parse: parseCity, explain: explainCity, optional: true, words: ["city", "shehar"] },
-  { key: "address", ask: "Your address? Say skip to skip.", retry: "Please say the address, or say skip.", parse: parseAddress, explain: explainAddress, dictation: true, optional: true, words: ["address", "pata"] },
+  { key: "name", ask: "What's your full name?", retry: "Sorry, I didn't catch that. Could you say your full name again?", parse: parseName, words: ["name", "naam"] },
+  { key: "phone", ask: "And your mobile number? Take your time, digit by digit.", retry: "Hmm, that doesn't look like a ten digit mobile number. Could you say it again, digit by digit?", parse: parsePhone, dictation: true, partial: phonePartial, words: ["phone", "mobile", "number", "contact"] },
+  { key: "email", ask: "What's your email address? Say at the rate and dot where needed.", retry: "I couldn't get a valid email. Could you try again? For example, name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial, words: ["email", "mail"] },
+  { key: "city", ask: "Which city are you in? Or just say skip.", retry: "Which city? Or say skip.", parse: parseCity, explain: explainCity, optional: true, words: ["city", "shehar"] },
+  { key: "address", ask: "And your address? You can say skip if you like.", retry: "Could you say the address again? Or say skip.", parse: parseAddress, explain: explainAddress, dictation: true, optional: true, words: ["address", "pata"] },
 ];
 
 export function highlightPay() {
@@ -296,8 +299,8 @@ export function createFormGuide(getOpts) {
   let buf = "";
   let partials = 0;
   const fields = () => getOpts().fields;
-  const DONE = () => getOpts().doneText || "All details are filled. Please check the screen and tap Pay.";
-  const EDIT = () => getOpts().editText || "All details are filled. Say change name, phone or email to edit, or tap Pay.";
+  const DONE = () => getOpts().doneText || "That's everything. Please check the details on the screen, and tap Pay when you're ready.";
+  const EDIT = () => getOpts().editText || "Everything's filled in. Say change, and the field name, to edit something, or tap Pay when you're ready.";
   // Phone numbers, emails and addresses come with pauses, so wait longer before cutting in.
   const T = (say, listen) => {
     const f = fields()[idx];
@@ -311,7 +314,7 @@ export function createFormGuide(getOpts) {
       if (o.onDone) o.onDone();
       return T(DONE(), false);
     }
-    return T(`${got ? "Got it. " : ""}${f[idx].ask}`, true);
+    return T(`${got ? pick("got", GOT_IT) + " " : ""}${f[idx].ask}`, true);
   }
 
   const inner = {
@@ -319,14 +322,14 @@ export function createFormGuide(getOpts) {
       const f = fields();
       buf = ""; partials = 0;
       if (idx >= f.length) return T(EDIT(), true);
-      return T(`${idx === 0 ? "Let us fill your details. " : ""}${f[idx].ask}`, true);
+      return T(`${idx === 0 ? "Sure, let's fill in your details. " : ""}${f[idx].ask}`, true);
     },
     handle(text) {
       const raw = String(text || "");
       const t = normalizeWords(raw);
       const f = fields();
-      if (/\b(stop|cancel|exit|quit|band|ruko)\b/.test(t)) { buf = ""; return T("Okay, I stopped. Tap the mic to continue.", false); }
-      if (/\b(pay|payment|paisa|bhugtan)\b/.test(t)) return T("Please tap the Pay button yourself when you are ready.", false);
+      if (/\b(stop|cancel|exit|quit|band|ruko)\b/.test(t)) { buf = ""; return T("Okay, I've stopped. Tap the mic whenever you want to carry on.", false); }
+      if (/\b(pay|payment|paisa|bhugtan)\b/.test(t)) return T("I'll leave the payment to you. Tap the Pay button when you're ready.", false);
       if (/\b(change|edit|correct|badlo|badal|galat|wrong)\b/.test(t)) {
         const j = f.findIndex((x) => x.words.some((w) => t.split(" ").includes(w)));
         if (j >= 0) { idx = j; fails = 0; buf = ""; partials = 0; return T(f[j].ask, true); }
@@ -347,8 +350,8 @@ export function createFormGuide(getOpts) {
         if (fails >= 3) {
           fails = 0;
           idx += 1;
-          if (idx >= f.length) return T("I could not hear that. Please type it, then tap the button.", false);
-          return T("I am having trouble hearing that. Please type this one, then tap the mic to continue.", false);
+          if (idx >= f.length) return T("Sorry, I'm not catching that. Could you type it in, and then tap the button?", false);
+          return T("Sorry, I'm having trouble hearing that one. Could you type it in? Then tap the mic and we'll carry on.", false);
         }
         return T((cur.explain && cur.explain(joined)) || cur.retry, true);
       }

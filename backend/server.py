@@ -695,6 +695,8 @@ async def root():
         # which kind of Razorpay key is set (never the key itself), and whether a hotel booking made here is real
         "razorpay_mode": "test" if key.startswith("rzp_test_") else "live" if key.startswith("rzp_live_") else "off",
         "hotel_bookings": "live" if REAL_HOTEL_BOOKINGS else "demo",
+        # how replies are spoken: "natural" (Gemini speech) or "browser" (the visitor's own device voice)
+        "voice": "natural" if (genai_client is not None and os.environ.get("TTS_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")) else "browser",
     }
 
 
@@ -1837,6 +1839,26 @@ def _system_prompt() -> str:
     )
 
 
+VOICE_STYLE = (
+    "\n\nSPOKEN REPLY - this visitor is talking to you by voice and a voice will read your reply aloud, so write it the way a warm, relaxed person really talks on the phone:\n"
+    "- Plain spoken words only: no lists, no emoji, no brackets, no web addresses, and no symbols such as the rupee sign, %, / or &.\n"
+    "- Short, easy sentences of about 12 words. Use everyday contractions and, now and then, a tiny human reaction ('Oh nice,' 'Alright,' 'Sure thing,'), but never the same one twice in a row, and do not open every reply the same way.\n"
+    "- Do not repeat the visitor's words back like a form. Mention what you understood only when it helps them check it.\n"
+    "- Say money and dates the way people say them ('around six thousand rupees', 'the fifth of November') instead of symbols or shorthand ('Rs 6k', '5/11', '2N/3D').\n"
+    "- When you need something from them, ask ONE short, friendly question and put it last.\n"
+    "- If the visitor asks whether you are a person or a machine, answer honestly and warmly that you are DestinoWay's AI assistant, then carry on helping. "
+    "Never claim to have a body, a family, or trips of your own.\n"
+)
+
+
+def _voice_style(gender: str) -> str:
+    """The extra rules for a visitor who talks instead of typing. The voice is a woman's or a man's, and Hindi grammar shows it."""
+    who = ("You speak as a woman: in Hindi or Hinglish use the feminine forms about yourself (kar rahi hoon, dekh sakti hoon, karungi)."
+           if gender != "male" else
+           "You speak as a man: in Hindi or Hinglish use the masculine forms about yourself (kar raha hoon, dekh sakta hoon, karunga).")
+    return VOICE_STYLE + who
+
+
 # ---- asking the model: slow or overloaded models must not leave the visitor waiting ----
 GEMINI_TIMEOUT = float(os.environ.get("GEMINI_TIMEOUT", "16"))          # seconds for one model
 GEMINI_HEDGE_AFTER = float(os.environ.get("GEMINI_HEDGE_AFTER", "7"))   # start the next model if the first has not answered by then
@@ -2043,7 +2065,10 @@ async def chat_stream(req: ChatRequest, request: Request):
             except Exception:
                 pass
         hint += _language_directive(user_text, history_users)
-        system_text = _system_prompt() + cmem.memory_prompt(trip, results, selection) + cmem.input_note(user_text, today) + hint
+        # a visitor who talks (the website sends context.voice = "female" | "male") gets a reply written to be heard
+        spoken_by = (req.context or {}).get("voice") if isinstance(req.context, dict) else None
+        voice_rules = _voice_style("male" if spoken_by == "male" else "female") if spoken_by else ""
+        system_text = _system_prompt() + voice_rules + cmem.memory_prompt(trip, results, selection) + cmem.input_note(user_text, today) + hint
         # the cities the visitor named so far (the model may only search for those) - or the city of the current trip
         named = " ".join(history_users + [user_text])
 
@@ -2086,8 +2111,17 @@ try:  # bike / auto / cab rides; an optional feature must never stop the API fro
     app.include_router(_rides.router)
 except Exception:
     logger.exception("rides are switched off")
+try:  # a natural spoken voice (Gemini speech); the website falls back to the browser's voice when this is off or busy
+    try:
+        import voice_tts as _voice_tts
+    except ImportError:
+        from backend import voice_tts as _voice_tts
+    _voice_tts.setup(client=lambda: genai_client, rate_limit=_rate_limit, client_ip=_client_ip)
+    app.include_router(_voice_tts.router)
+except Exception:
+    logger.exception("the natural voice is switched off")
 
-_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+_origins =[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

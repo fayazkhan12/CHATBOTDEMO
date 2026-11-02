@@ -343,7 +343,7 @@ export function retrySearch(msgId) {
 }
 
 // ------------------------------------------------------------------ sending a message
-export async function sendMessage(text, { userName = null } = {}) {
+export async function sendMessage(text, { userName = null, voice = null, onReply = null } = {}) {
   const t = String(text || "").trim();
   if (!t || state.sending) return null;
 
@@ -378,6 +378,7 @@ export async function sendMessage(text, { userName = null } = {}) {
         history,
         context: {
           user: userName || null,
+          ...(voice ? { voice } : {}),          // "female" | "male": the visitor is talking, so the reply is written to be heard
           ...(state.trip ? { trip: state.trip } : {}),
           ...(state.selection ? { selection: state.selection } : {}),
           ...(results ? { results } : {}),
@@ -419,6 +420,7 @@ export async function sendMessage(text, { userName = null } = {}) {
   patchMessage(replyId, { text: clean, streaming: false, ...(searchable ? { search: plainIntent(intent) } : {}) });
   if (searchable) set({ trip: plainIntent(intent) });
   set({ sending: false });
+  if (onReply) { try { onReply(clean, searchable ? intent : null); } catch { /* the caller's problem */ } }     // spoken now, not after the hotel search
   if (searchable) await runSearch(intent, replyId);
   return { clean, intent: searchable ? intent : null };
 }

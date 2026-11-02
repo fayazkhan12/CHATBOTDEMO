@@ -13,7 +13,7 @@ function AppDock() {
   const navigate = useNavigate();
   const formRef = useRef(null);
   const go = (path, msg) => {
-    if (!path) return { say: "That page is not available here.", listen: true };
+    if (!path) return { say: "Sorry, I can't open that page from here.", listen: true };
     navigate(path);
     return { say: msg, listen: false };
   };
@@ -22,15 +22,15 @@ function AppDock() {
     onStart: () => {
       formRef.current = createPageGuide();
       if (formRef.current) return formRef.current.start();
-      return { say: "Say home, my bookings, login or back. You can also just use the screen.", listen: true };
+      return { say: "Where to? You can say home, my bookings, login, or back.", listen: true };
     },
     onText: (said) => {
       if (BACK_RE.test(said.toLowerCase())) { navigate(-1); return { listen: false }; }
       if (formRef.current) return formRef.current.handle(said);
-      if (isHomeIntent(said)) return go(PATHS.home, "Taking you home.");
-      if (isBookingsIntent(said)) return go(PATHS.bookings, "Opening your bookings.");
-      if (isLoginIntent(said)) return go(PATHS.login, "Opening login.");
-      return { say: "Sorry. Say home, my bookings, login or back.", listen: true };
+      if (isHomeIntent(said)) return go(PATHS.home, "Sure, taking you home.");
+      if (isBookingsIntent(said)) return go(PATHS.bookings, "Okay, opening your bookings.");
+      if (isLoginIntent(said)) return go(PATHS.login, "Sure, opening the login page.");
+      return { say: "Sorry, I didn't catch that. You can say home, my bookings, login, or back.", listen: true };
     },
   }, 0);
   return null;

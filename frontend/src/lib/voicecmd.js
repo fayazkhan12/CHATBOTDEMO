@@ -206,8 +206,8 @@ export function parseAddress(text) {
 
 export function explainAddress(text) {
   const t = String(text || "").replace(/^(my )?address is\s+/i, "");
-  if (isStateName(t)) return "That is a state. Please say the full address, with house number, street and area, or say skip.";
-  return "Please say the full address, with house number, street and area, or say skip.";
+  if (isStateName(t)) return "That's just the state. Could you give me the full address, with house number, street and area? Or say skip.";
+  return "Could you say the full address, with house number, street and area? Or say skip.";
 }
 
 export function isSkip(normalized) {
@@ -412,14 +412,14 @@ function sayDigits(d) { return d.split("").join(" "); }
 // Returns what to tell the user when only part of a number was heard, or null when it is hopeless.
 export function digitsPartial(text, min) {
   const d = spokenDigits(text);
-  if (d.length > 0 && d.length < min) return `I heard ${d.length} digits: ${sayDigits(d)}. Say the remaining digits.`;
+  if (d.length > 0 && d.length < min) return `I've got ${sayDigits(d)} so far. Could you say the rest?`;
   return null;
 }
 
 export function phonePartial(text) {
   let d = spokenDigits(text);
   if (d.startsWith("91") && d.length > 10) d = d.slice(2);
-  if (d.length > 0 && d.length < 10) return `I heard ${d.length} digits: ${sayDigits(d)}. Say the remaining digits.`;
+  if (d.length > 0 && d.length < 10) return `I've got ${sayDigits(d)} so far. Could you say the rest?`;
   return null;
 }
 
@@ -427,8 +427,8 @@ export function emailPartial(text) {
   const t = String(text || "").toLowerCase();
   const hasAt = /@|\bat\b|attherate|एट|ऐट/.test(t);
   const letters = t.replace(/[^a-z0-9ऀ-ॿ]/g, "").length;
-  if (!hasAt) return letters >= 2 ? "Got it. Now say at the rate, then the domain, for example gmail dot com." : null;
+  if (!hasAt) return letters >= 2 ? "Okay. Now say at the rate, and then the domain, like gmail dot com." : null;
   const after = t.split(/@|\bat the rate( of)?\b|\bat rate\b|\battherate\b|\bat\b/).pop() || "";
-  if (after.replace(/[^a-zऀ-ॿ]/g, "").length < 2) return "Now say the domain, for example gmail dot com.";
+  if (after.replace(/[^a-zऀ-ॿ]/g, "").length < 2) return "And what comes after that? Something like gmail dot com.";
   return null;
 }

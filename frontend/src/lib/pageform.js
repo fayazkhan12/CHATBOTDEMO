@@ -53,20 +53,24 @@ function phoneParser(el, label) {
 }
 
 function specFor(kind, el, label, optional) {
-  const skip = optional ? " Say skip to skip." : "";
+  const skip = optional ? " Or say skip." : "";
   const lower = label.toLowerCase();
+  if (/pick ?up|from/.test(lower) && kind === "text") return { ask: "Where should we pick you up?" + skip, retry: "Sorry, where should we pick you up?" + skip, parse: textOf };
+  if (/\bdrop|\bto\b|destination/.test(lower) && kind === "text") return { ask: "And where would you like to go?" + skip, retry: "Sorry, where would you like to go?" + skip, parse: textOf };
   switch (kind) {
-    case "name": return { ask: `What is your ${lower}?`, retry: "Sorry, please say it again.", parse: parseName };
-    case "email": return { ask: "Your email address. Say at the rate and dot where needed." + skip, retry: "I could not get a valid email. Please say it again, for example name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial };
-    case "phone": return { ask: "Your mobile number, digit by digit." + skip, retry: "I could not get a valid 10 digit mobile number. Please say it again, digit by digit.", parse: phoneParser(el, label), dictation: true, partial: phonePartial };
-    case "otp": return { ask: "Say the code, digit by digit.", retry: "I could not get the code. Please say the digits again.", parse: (t) => parseDigits(t, 4, 8), dictation: true, partial: (t) => digitsPartial(t, 4) };
-    case "pin": return { ask: "Say the PIN code, digit by digit." + skip, retry: "Please say the PIN code again, digit by digit.", parse: (t) => parseDigits(t, 5, 6), dictation: true, partial: (t) => digitsPartial(t, 6) };
-    case "number": return { ask: `Say the ${lower}.` + skip, retry: "Please say the number again.", parse: (t) => parseDigits(t, 1, 9) };
-    case "city": return { ask: "Which city?" + skip, retry: "Please say the city name." + skip, parse: parseCity, explain: explainCity };
-    case "address": return { ask: "Your address?" + skip, retry: "Please say the address." + skip, parse: parseAddress, explain: explainAddress, dictation: true };
-    default: return { ask: `Please say ${lower}.` + skip, retry: `Please say ${lower} again.` + skip, parse: (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length >= 1 && s.length <= 120 ? s : null; } };
+    case "name": return { ask: `What's your ${lower}?`, retry: "Sorry, could you say that again?", parse: parseName };
+    case "email": return { ask: "What's your email address? Say at the rate and dot where needed." + skip, retry: "I couldn't get a valid email. Could you try again? For example, name at the rate gmail dot com.", parse: parseEmail, dictation: true, partial: emailPartial };
+    case "phone": return { ask: "And your mobile number? Take your time, digit by digit." + skip, retry: "Hmm, that doesn't look like a ten digit mobile number. Could you say it again, digit by digit?", parse: phoneParser(el, label), dictation: true, partial: phonePartial };
+    case "otp": return { ask: "Please say the code, digit by digit.", retry: "I couldn't get the code. Could you say the digits again?", parse: (t) => parseDigits(t, 4, 8), dictation: true, partial: (t) => digitsPartial(t, 4) };
+    case "pin": return { ask: "What's the PIN code? Digit by digit." + skip, retry: "Could you say the PIN code again, digit by digit?", parse: (t) => parseDigits(t, 5, 6), dictation: true, partial: (t) => digitsPartial(t, 6) };
+    case "number": return { ask: `What's the ${lower}?` + skip, retry: "Sorry, could you say the number again?", parse: (t) => parseDigits(t, 1, 9) };
+    case "city": return { ask: "Which city?" + skip, retry: "Sorry, which city?" + skip, parse: parseCity, explain: explainCity };
+    case "address": return { ask: "And your address?" + skip, retry: "Could you say the address again?" + skip, parse: parseAddress, explain: explainAddress, dictation: true };
+    default: return { ask: `What's the ${lower}?` + skip, retry: `Sorry, could you say the ${lower} again?` + skip, parse: textOf };
   }
 }
+
+const textOf = (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length >= 1 && s.length <= 120 ? s : null; };
 
 export function scanFields() {
   if (typeof document === "undefined") return [];
@@ -102,7 +106,7 @@ export function createPageGuide() {
   return createFormGuide(() => ({
     fields,
     onValue: (k, v) => setFieldValue(fields[k].el, v),
-    doneText: "All fields are filled. Please check the screen and tap the button yourself to continue.",
-    editText: "All fields are filled. Say change and the field name to edit, or tap the button to continue.",
+    doneText: "That's everything. Please check the screen, and tap the button yourself when you're ready.",
+    editText: "Everything's filled in. Say change, and the field name, to edit something, or tap the button when you're ready.",
   }));
 }

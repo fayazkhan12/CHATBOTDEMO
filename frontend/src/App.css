@@ -317,6 +317,8 @@ a { color: inherit; text-decoration: none; }
 }
 .agent-name { font-family: 'Jost', sans-serif; font-size: 20px; letter-spacing: -0.01em; }
 .agent-status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; font-family: 'Roboto', sans-serif; letter-spacing: 0.05em; margin-top: 2px; }
+.voice-who { background: none; border: 0; padding: 3px 0; margin: 0; color: var(--muted); font: inherit; letter-spacing: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-who:hover { color: var(--teal); }
 .status-dot { width: 7px; height: 7px; background: var(--teal); border-radius: 50%; box-shadow: 0 0 10px var(--teal); animation: breathe 2s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.4; } }
 .agent-actions { display: flex; gap: 8px; }

@@ -9,7 +9,7 @@ import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { speak, stopSpeaking as cancelSpeech } from "../lib/tts";
+import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, getVoiceGender, setVoiceGender } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
 const LABELS = {
@@ -187,6 +187,8 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [speakingReply, setSpeakingReply] = useState(false);
   const [voiceOutput, setVoiceOutput] = useState(true);
+  const [voiceGender, setGender] = useState(getVoiceGender);     // the assistant's voice: "female" | "male"
+  const [engine, setEngine] = useState("");                      // which voice spoke last: "natural" | "device"
   const endRef = useRef(null);
   const firstScroll = useRef(true);
   const voiceModeRef = useRef(false); // true for current send if invoked via mic
@@ -239,25 +241,31 @@ export default function Home() {
     if (!t || sending) return;
     voiceModeRef.current = fromVoice;
     setText("");
-    const out = await sendMessage(t, { userName: user?.name || null });
-    if (out && out.pick) {          // "open the second one", typed
-      openCardRef.current(out.pick);
-      voiceModeRef.current = false;
-      return;
-    }
-    const clean = out ? out.clean : "";
-    if (voiceModeRef.current && voiceOutput && clean) {
+    const gender = getVoiceGender();
+    // a slow answer on a voice call: a short "hmm, one second" instead of a silent line
+    const cueTimer = fromVoice && voiceOutput ? setTimeout(() => playThinkingCue({ preferred: voiceLangRef.current, gender }), 2300) : null;
+    // the reply is spoken the moment it is final, not after the (slow) hotel search that follows it
+    const hear = (clean) => {
+      clearTimeout(cueTimer);
+      if (!(voiceModeRef.current && voiceOutput && clean)) return;
       const id = speakIdRef.current + 1;
       speakIdRef.current = id;
       setSpeakingReply(true);
       speak(clean, {
         preferred: voiceLangRef.current,
+        gender,
+        onStart: setEngine,
         onEnd: (spoken) => {
           if (id !== speakIdRef.current) return;      // a newer reply, the Stop button or the mic took over
           setSpeakingReply(false);
           if (spoken && voiceSessionRef.current && asksQuestion(clean)) listenAgain();
         },
       });
+    };
+    const out = await sendMessage(t, { userName: user?.name || null, voice: fromVoice && voiceOutput ? gender : null, onReply: hear });
+    clearTimeout(cueTimer);
+    if (out && out.pick) {          // "open the second one", typed
+      openCardRef.current(out.pick);
     }
     voiceModeRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -342,10 +350,11 @@ export default function Home() {
     autoTurnsRef.current += 1;
     setTimeout(() => {      // a short pause, so the end of the spoken question is not heard as the answer
       if (voiceSessionRef.current && !voiceRef.current && !sendingRef.current && startListeningRef.current) startListeningRef.current();
-    }, 450);
+    }, 300);
   }, []);
 
   const toggleVoice = () => {
+    unlockAudio();                        // this tap lets the voice talk later without another tap (Safari, iPhone)
     if (listening) { voiceSessionRef.current = false; stopVoice(); return; }
     cancelSpeech();                       // tapping the mic while the assistant talks: it stops and listens
     speakIdRef.current += 1;
@@ -377,6 +386,23 @@ export default function Home() {
     setSpeakingReply(false);
   };
 
+  // Tap to hear the other voice: it says a short hello, so the choice can be made by ear.
+  const switchVoice = () => {
+    const g = voiceGender === "female" ? "male" : "female";
+    setVoiceGender(g);
+    setGender(g);
+    unlockAudio();
+    if (!voiceOutput) return;
+    const id = speakIdRef.current + 1;
+    speakIdRef.current = id;
+    voiceSessionRef.current = false;
+    setSpeakingReply(true);
+    const hello = String(voiceLangRef.current).startsWith("hi")
+      ? "नमस्ते! DestinoWay में आपका स्वागत है। कहाँ घूमने चलना है?"
+      : "Hi, welcome to DestinoWay. Where would you like to go?";
+    speak(hello, { preferred: voiceLangRef.current, gender: g, onStart: setEngine, onEnd: () => { if (id === speakIdRef.current) setSpeakingReply(false); } });
+  };
+
   const showStarters = messages.length <= 1;
 
   return (
@@ -387,7 +413,11 @@ export default function Home() {
           <div>
             <div className="agent-name">DestinoWay AI</div>
             <div className="agent-status">
-           
+              {voiceOutput && (
+                <button type="button" className="voice-who" onClick={switchVoice} data-testid="voice-gender" title="Tap to hear the other voice">
+                  {voiceGender === "female" ? "Female voice" : "Male voice"}{engine ? ` · ${engine === "natural" ? "natural" : "device"}` : ""}
+                </button>
+              )}
             </div>
           </div>
         </div>

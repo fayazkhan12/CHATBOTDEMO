@@ -120,7 +120,7 @@ export function createVoiceEngine({
   onInterim,
   onFinal,
   onStop,
-  silenceMs = 1500,
+  silenceMs = 1100,       // how long a pause ends what the visitor said: about the pause a person waits before answering
   idleMs = 120000,
   resumeDelayMs = 600,
   once = false,

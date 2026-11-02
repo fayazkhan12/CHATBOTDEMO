@@ -647,8 +647,8 @@ def nights_known(turns: List[Tuple[str, str]], user_text: str, today: date) -> b
 FIXED = {
     "updating": {
         "en": "Sure, updating your search now.",
-        "hinglish": "Theek hai, search update kar raha hoon.",
-        "hi": "ठीक है, खोज अपडेट कर रहा हूँ।",
+        "hinglish": "Theek hai, search abhi update ho rahi hai.",
+        "hi": "ठीक है, खोज अभी अपडेट हो रही है।",
     },
     "no_search": {
         "en": "Tell me what to change: dates, guests, budget or city.",
@@ -712,13 +712,13 @@ FIXED = {
     },
     "bad_nights": {
         "en": "I can search stays of 1 to 30 nights. How many nights?",
-        "hinglish": "Main 1 se 30 raat tak ki stay dekh sakta hoon. Kitni raat?",
-        "hi": "मैं 1 से 30 रात तक की स्टे देख सकता हूँ। कितनी रात?",
+        "hinglish": "Ek baar mein 1 se 30 raat tak ki stay dekhi ja sakti hai. Kitni raat?",
+        "hi": "एक बार में 1 से 30 रात तक की स्टे देखी जा सकती है। कितनी रात?",
     },
     "bad_travellers": {
         "en": "I can search for 1 to 10 guests at a time. How many guests?",
-        "hinglish": "Ek baar mein 1 se 10 log tak dekh sakta hoon. Kitne log honge?",
-        "hi": "एक बार में 1 से 10 लोग देख सकता हूँ। कितने लोग होंगे?",
+        "hinglish": "Ek baar mein 1 se 10 log tak ki search ho sakti hai. Kitne log honge?",
+        "hi": "एक बार में 1 से 10 लोगों तक की खोज हो सकती है। कितने लोग होंगे?",
     },
     "ask_child_ages": {
         "en": "How old is each child? Please tell me the age of every child travelling.",
@@ -727,8 +727,8 @@ FIXED = {
     },
     "bad_rooms": {
         "en": "Every room needs at least one adult, and I can search up to 5 rooms. How many rooms and adults?",
-        "hinglish": "Har room me kam se kam ek adult chahiye, aur main 5 room tak dekh sakta hoon. Kitne room aur kitne adult?",
-        "hi": "हर कमरे में कम से कम एक वयस्क चाहिए, और मैं 5 कमरे तक देख सकता हूँ। कितने कमरे और कितने वयस्क?",
+        "hinglish": "Har room me kam se kam ek adult chahiye, aur 5 room tak ki search ho sakti hai. Kitne room aur kitne adult?",
+        "hi": "हर कमरे में कम से कम एक वयस्क चाहिए, और 5 कमरों तक की खोज हो सकती है। कितने कमरे और कितने वयस्क?",
     },
     "past_time": {
         "en": "That pickup time has already passed. What time should I book the ride for?",
@@ -737,13 +737,13 @@ FIXED = {
     },
     "far_time": {
         "en": "I can schedule a ride up to 30 days ahead. Which day and time?",
-        "hinglish": "Main 30 din aage tak ki ride schedule kar sakta hoon. Kaunsa din aur time?",
-        "hi": "मैं 30 दिन आगे तक की राइड शेड्यूल कर सकता हूँ। कौन सा दिन और समय?",
+        "hinglish": "Ride 30 din aage tak ki schedule ho sakti hai. Kaunsa din aur time?",
+        "hi": "राइड 30 दिन आगे तक की शेड्यूल हो सकती है। कौन सा दिन और समय?",
     },
     "area_missing": {
         "en": "(I could not find the exact spot for {area}, so I am showing hotels across {dest}.)",
-        "hinglish": "({area} ka exact location nahi mila, poore {dest} ke hotels dikha raha hoon.)",
-        "hi": "({area} की सटीक जगह नहीं मिली, इसलिए पूरे {dest} के होटल दिखा रहा हूँ।)",
+        "hinglish": "({area} ka exact location nahi mila, isliye poore {dest} ke hotels dikhaye ja rahe hain.)",
+        "hi": "({area} की सटीक जगह नहीं मिली, इसलिए पूरे {dest} के होटल दिखाए जा रहे हैं।)",
     },
 }
 
