@@ -451,6 +451,7 @@ async def speak(body: SpeakIn, request: Request) -> Response:
         raise HTTPException(status_code=400, detail=f"Send at most {MAX_CHARS} characters at a time.")
     if _limit is not None:
         _limit(f"tts:{_ip(request)}", int(_num("TTS_RATE_PER_MIN", 90)), 60)
+    began = time.time()
     gender = "male" if str(body.voice).lower() == "male" else "female"
     voice = voice_name(gender)
     code, name = text_language(text, body.lang)
@@ -467,4 +468,8 @@ async def speak(body: SpeakIn, request: Request) -> Response:
         served = "miss"
     else:
         served = "hit"
-    return Response(content=hit[0], media_type=hit[1], headers={"X-Voice-Cache": served, "Cache-Control": "no-store"})
+    # X-Voice-Ms: how long this request took on the server (the speech model is most of it), to see how slow the voice really is
+    return Response(content=hit[0], media_type=hit[1], headers={
+        "X-Voice-Cache": served, "X-Voice-Ms": str(int((time.time() - began) * 1000)),
+        "X-Voice-Model": (_good_model[:1] or models()[:1] or [""])[0], "Cache-Control": "no-store",
+    })

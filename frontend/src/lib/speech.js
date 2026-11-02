@@ -82,6 +82,7 @@ export function prepareSpeech(text) {
 
 const ENDS = ".!?\u0964\u0965\u2026";
 const CLOSERS = "\"')]\u201D\u2019";
+const ABBREVIATIONS = /(?:^|\s)(?:Dr|Mr|Mrs|Ms|St|Rd|No|vs|approx)\.$/;      // "Dr. Rao" is not the end of a sentence
 
 // "Sure. Which city?" -> ["Sure.", "Which city?"]. A full stop inside a number ("1.25") or a short form is not an end.
 export function sentences(text) {
@@ -92,7 +93,7 @@ export function sentences(text) {
     cur += t[i];
     if (ENDS.includes(t[i])) {
       while (i + 1 < t.length && (ENDS.includes(t[i + 1]) || CLOSERS.includes(t[i + 1]))) { i += 1; cur += t[i]; }
-      if (i + 1 >= t.length || /\s/.test(t[i + 1])) { out.push(cur.trim()); cur = ""; }
+      if ((i + 1 >= t.length || /\s/.test(t[i + 1])) && !ABBREVIATIONS.test(cur)) { out.push(cur.trim()); cur = ""; }
     }
   }
   if (cur.trim()) out.push(cur.trim());
@@ -101,8 +102,10 @@ export function sentences(text) {
 
 const CONJ = /^(?:(?:and|but|or|aur|lekin|toh|ya)\b|(?:\u0914\u0930|\u0932\u0947\u0915\u093F\u0928|\u092F\u093E)(?=\s))/i;
 
-function breakLong(s, max) {
-  if (s.length <= max) return [s];
+// Cuts `s` in two at a comma, a semicolon or an "and" / "aur" near the middle, again and again until every part is at most `limit`.
+// With no such place it is cut at a space only when it is longer than `hard` (an unnatural place to pause is worse than a long piece).
+function breakLong(s, limit, hard = limit) {
+  if (s.length <= limit) return [s];
   const mid = Math.floor(s.length / 2);
   let at = -1;
   for (let d = 0; d < mid && at < 0; d += 1) {          // the comma, "and", "aur"... closest to the middle
@@ -110,30 +113,36 @@ function breakLong(s, max) {
       if (i > 12 && i < s.length - 12 && (/[,;:]/.test(s[i]) || (s[i] === " " && CONJ.test(s.slice(i + 1))))) { at = i; break; }
     }
   }
-  if (at < 0) at = s.lastIndexOf(" ", mid) > 12 ? s.lastIndexOf(" ", mid) : s.indexOf(" ", mid);
+  if (at < 0) {
+    if (s.length <= hard) return [s];
+    at = s.lastIndexOf(" ", mid) > 12 ? s.lastIndexOf(" ", mid) : s.indexOf(" ", mid);
+  }
   if (at < 0) return [s];
-  return [...breakLong(s.slice(0, at + 1).trim(), max), ...breakLong(s.slice(at + 1).trim(), max)].filter(Boolean);
+  return [...breakLong(s.slice(0, at + 1).trim(), limit, hard), ...breakLong(s.slice(at + 1).trim(), limit, hard)].filter(Boolean);
 }
 
-// Pieces to speak one after the other. A short reply stays whole (one breath sounds better than three); a long one
-// starts with a short piece so the voice can begin early.
-export function splitForSpeech(text, { whole = 170, first = 130, max = 240 } = {}) {
+// Pieces to speak one after the other. The natural voice needs about a second plus a tenth of a second per character to make a
+// piece (measured on the live server) and it can not stream, so the length of the FIRST piece decides how long the visitor waits
+// in silence. A short reply stays whole; a longer one starts with a short piece, and the other pieces are made while it plays.
+// A piece should not be much longer than the one before it (1.7 times), or the voice would stop and wait for it.
+export function splitForSpeech(text, { whole = 64, first = 56, max = 90 } = {}) {
   const t = String(text || "").trim();
   if (!t) return [];
   if (t.length <= whole) return [t];
-  let parts = [];
-  for (const s of sentences(t)) parts.push(...breakLong(s, max));
-  const merged = [];                                      // "Dr." or "Okay." alone is too short to be a piece of its own
-  for (const p of parts) {
-    if (merged.length && merged[merged.length - 1].length < 24) merged[merged.length - 1] += ` ${p}`;
-    else merged.push(p);
+  const atoms = [];
+  for (const s of sentences(t)) atoms.push(...breakLong(s, max));
+  const joined = [];                                      // "Sure!" or "Dr." alone is too short to be a piece of its own
+  for (const a of atoms) {
+    const k = joined.length - 1;
+    if (k >= 0 && joined[k].length < 24 && joined[k].length + 1 + a.length <= max + 15) joined[k] += ` ${a}`;
+    else joined.push(a);
   }
-  parts = merged;
+  if (joined.length && joined[0].length > first + 16) joined.splice(0, 1, ...breakLong(joined[0], first, max));      // the one the visitor waits for
   const out = [];
   let cur = "";
-  for (const p of parts) {
-    const limit = out.length === 0 ? first : max;
-    if (cur && cur.length + 1 + p.length > limit) { out.push(cur); cur = p; } else cur = cur ? `${cur} ${p}` : p;
+  for (const a of joined) {
+    const limit = out.length === 0 ? first : Math.min(max, Math.max(first, Math.round(1.7 * out[out.length - 1].length)));
+    if (cur && cur.length + 1 + a.length > limit) { out.push(cur); cur = a; } else cur = cur ? `${cur} ${a}` : a;
   }
   if (cur) out.push(cur);
   return out;

@@ -10,7 +10,7 @@
 import { prepareSpeech, splitForSpeech } from "./speech.js";
 import { naturalVoiceAvailable, fetchClip, cachedClip, playClip, stopPlayback, getVoiceGender } from "./neuralvoice.js";
 
-export { unlockAudio, getVoiceGender, setVoiceGender, naturalVoiceAvailable } from "./neuralvoice.js";
+export { unlockAudio, getVoiceGender, setVoiceGender, getVoiceMode, setVoiceMode, naturalVoiceAvailable } from "./neuralvoice.js";
 
 const SCRIPTS = [
   ["hi", /[\u0900-\u097F]/g],   // Devanagari: Hindi, Marathi
@@ -143,12 +143,15 @@ function runNatural(chunks, lang, preferred, who, me, finish, started) {
   const jobs = [];
   const ensure = (k) => {
     if (k < chunks.length && !jobs[k]) {
-      jobs[k] = fetchClip(chunks[k], { lang: preferred || lang.tag, gender: who, timeoutMs: k === 0 ? 10000 : 15000, signal: me.ctrl ? me.ctrl.signal : undefined });
+      jobs[k] = fetchClip(chunks[k], { lang: preferred || lang.tag, gender: who, timeoutMs: k === 0 ? 16000 : 20000, signal: me.ctrl ? me.ctrl.signal : undefined });
     }
     return jobs[k];
   };
   let i = 0;
-  const device = (from) => { if (!me.dead) runDevice(chunks.slice(from), lang, preferred, me, finish, started); };
+  const device = async (from) => {
+    await waitForCue();                  // a "hmm" that is still playing is not talked over
+    if (!me.dead) runDevice(chunks.slice(from), lang, preferred, me, finish, started);
+  };
   const step = async () => {
     if (me.dead) return;
     if (i >= chunks.length) { finish(true); return; }
@@ -178,12 +181,13 @@ function runNatural(chunks, lang, preferred, who, me, finish, started) {
   step();
 }
 
-// Speaks `text`. Returns false (and calls onEnd(false) at once) when nothing can be spoken: empty text, no speech support, or a
+// Speaks `text` (or a list of lines, each made on its own so a line that comes again, "Got it.", is already in memory).
+// Returns false (and calls onEnd(false) at once) when nothing can be spoken: empty text, no speech support, or a
 // language this device has no voice for. Otherwise true. onEnd(spoken) is called once, even if the browser forgets to report the end.
 // onStart(engine) is called when the first sound begins (and again if the other voice has to take over). gender: "female" | "male" (the natural voice; default: the visitor's choice).
 export function speak(text, { onEnd, onStart, preferred, gender } = {}) {
   if (current) current.cancel();
-  const me = { dead: false, ended: false, play: null, timer: null, guard: null, ctrl: typeof window !== "undefined" && typeof window.AbortController === "function" ? new window.AbortController() : null };
+  const me = { dead: false, ended: false, sounding: false, play: null, timer: null, guard: null, ctrl: typeof window !== "undefined" && typeof window.AbortController === "function" ? new window.AbortController() : null };
   const finish = (spoken) => {
     if (me.ended) return;
     me.ended = true;
@@ -203,16 +207,18 @@ export function speak(text, { onEnd, onStart, preferred, gender } = {}) {
   };
   let announced = "";
   const started = (kind) => {
+    me.sounding = true;
     if (announced === kind) return;     // said once per voice: natural, and device if it has to take over
     announced = kind;
     engine = kind;
     if (onStart) { try { onStart(kind); } catch (e) { /* ignore */ } }
   };
 
-  const body = prepareSpeech(text);
+  const lines = (Array.isArray(text) ? text : [text]).map(prepareSpeech).filter(Boolean);
+  const body = lines.join(" ");
   if (!body) { finish(false); return false; }
   const lang = replyLanguage(body, preferred);
-  const chunks = splitForSpeech(body);
+  const chunks = lines.reduce((all, line) => all.concat(splitForSpeech(line)), []);
   current = me;
   if (naturalVoiceAvailable()) {
     runNatural(chunks, lang, preferred, gender || getVoiceGender(), me, finish, started);
@@ -227,10 +233,23 @@ export function stopSpeaking() {
   deviceCancel();
 }
 
+// Gets the sound of lines that will be needed soon (the next question of a form) ready while the visitor is still answering.
+export function prefetchSpeech(texts, { preferred, gender } = {}) {
+  if (!naturalVoiceAvailable()) return;
+  const who = gender || getVoiceGender();
+  (Array.isArray(texts) ? texts : [texts]).forEach((text) => {
+    const line = prepareSpeech(text);
+    if (!line) return;
+    const lang = replyLanguage(line, preferred);
+    splitForSpeech(line).slice(0, 2).forEach((piece) => { fetchClip(piece, { lang: preferred || lang.tag, gender: who, timeoutMs: 20000, shared: true }); });
+  });
+}
+
 // ---- a short "hmm, one second" while a slow answer is on its way ----
-// People fill a pause with a word; a silent phone line makes you wonder if anyone is there. The cue is played only when the
-// natural voice is on and the clip is ready (fetched after the first natural reply, so no quota is spent while the voice does not work),
-// not on every slow answer, and never over speech.
+// People fill a pause with a word; a silent phone line makes you wonder if anyone is there. The natural voice needs a few seconds to
+// make a sentence, so the cue is played while the answer is thought of and while it is turned into sound. It is played only when the
+// natural voice is on and the clip is ready (one is fetched at the first tap on the mic, the others after the first natural reply),
+// not on every answer, and never over speech.
 const CUES = {
   en: ["Hmm, one second.", "Okay, let me check.", "Sure, just a moment."],
   hi: ["हम्म, एक सेकंड।", "ठीक है, बस एक मिनट।", "जी, बस एक पल।"],
@@ -244,29 +263,30 @@ function waitForCue() {
   return Promise.race([cue.done, new Promise((resolve) => setTimeout(resolve, 3500))]);
 }
 
-const cuesAsked = new Set();
-export function prefetchCues({ preferred, gender } = {}) {
+// Gets the clips ready (again, if the memory dropped one). A request that is already on its way is joined, not repeated.
+// `count`: only the first few (the first tap on the mic asks for one, so the first answer does not queue behind them).
+export function prefetchCues({ preferred, gender, count = CUES.en.length } = {}) {
   if (!naturalVoiceAvailable()) return;
   const set = cueSet(preferred);
   const who = gender || getVoiceGender();
-  CUES[set].forEach((text) => {
-    const key = `${who}|${set}|${text}`;
-    if (cuesAsked.has(key) || cachedClip(text, { lang: cueLang(set), gender: who })) return;
-    cuesAsked.add(key);
-    fetchClip(text, { lang: cueLang(set), gender: who, timeoutMs: 15000 }).then((blob) => { if (!blob) cuesAsked.delete(key); });
+  CUES[set].slice(0, count).forEach((text) => {
+    if (cachedClip(text, { lang: cueLang(set), gender: who })) return;
+    fetchClip(text, { lang: cueLang(set), gender: who, timeoutMs: 20000, shared: true });
   });
 }
 
 export function playThinkingCue({ preferred, gender } = {}) {
-  if (!naturalVoiceAvailable() || cue.playing || (current && !current.ended)) return false;
+  if (!naturalVoiceAvailable() || cue.playing || (current && current.sounding)) return false;
   if (cue.cool > 0) { cue.cool -= 1; return false; }
   const set = cueSet(preferred);
   const who = gender || getVoiceGender();
-  const ready = CUES[set].map((text, i) => ({ i, blob: cachedClip(text, { lang: cueLang(set), gender: who }) })).filter((o) => o.blob && o.i !== cue.last);
+  const all = CUES[set].map((text, i) => ({ i, blob: cachedClip(text, { lang: cueLang(set), gender: who }) }));
+  if (all.some((o) => !o.blob)) prefetchCues({ preferred, gender: who });          // one was dropped from memory: get it back for next time
+  const ready = all.filter((o) => o.blob && o.i !== cue.last);
   if (!ready.length) return false;
   const pick = ready[Math.floor(Math.random() * ready.length)];
   cue.last = pick.i;
-  cue.cool = 2;
+  cue.cool = 1;                        // at most every other answer: a person does not say "hmm" every time
   cue.playing = true;
   cue.done = new Promise((resolve) => { cue.release = resolve; });
   playClip(pick.blob, { onEnd: () => { cue.playing = false; cue.release(); } });

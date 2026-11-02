@@ -877,3 +877,18 @@ a { color: inherit; text-decoration: none; }
 .detail-hero-none { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; aspect-ratio: auto; min-height: 160px; background: var(--surface-2); color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
 .detail-hero-none svg { color: var(--teal); }
 .inline-photo-none { width: 110px; min-height: 100px; height: 100%; display: grid; place-items: center; background: var(--surface-2); color: var(--teal); }
+
+/* the chat header (name, voice, buttons) must never be wider than a phone: tighter on small screens, and on the smallest the
+   buttons drop to a second row instead of running off the screen */
+.agent-header { flex-wrap: wrap; gap: 10px 8px; }
+.agent-identity { min-width: 0; }
+.agent-actions { margin-left: auto; flex: none; }
+@media (max-width: 400px) {
+  .agent-header { padding: 12px 14px; }
+  .agent-identity { gap: 10px; }
+  .agent-avatar { width: 38px; height: 38px; flex: none; }
+  .agent-name { font-size: 17px; }
+  .agent-actions { gap: 6px; }
+  .agent-actions .icon-btn { width: 38px; height: 38px; }
+  .agent-actions [data-testid="new-chat"] { width: auto; padding-inline: 10px; }
+}

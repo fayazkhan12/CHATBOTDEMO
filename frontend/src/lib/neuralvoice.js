@@ -8,6 +8,7 @@ const base = () => `${process.env.REACT_APP_BACKEND_URL || ""}/api`;
 
 const state = { off: false, until: 0, blocked: false };       // off: not set up on the server; until: paused; blocked: needs a tap first
 const GENDER_KEY = "dw_voice_gender";
+const MODE_KEY = "dw_voice_mode";
 
 export function getVoiceGender() {
   try { return window.localStorage.getItem(GENDER_KEY) === "male" ? "male" : "female"; } catch (e) { return "female"; }
@@ -16,16 +17,24 @@ export function setVoiceGender(g) {
   try { window.localStorage.setItem(GENDER_KEY, g === "male" ? "male" : "female"); } catch (e) { /* ignore */ }
 }
 
+// "natural": the speech model (the best sound, but a few seconds to make each sentence); "quick": the device's own voice at once.
+export function getVoiceMode() {
+  try { return window.localStorage.getItem(MODE_KEY) === "quick" ? "quick" : "natural"; } catch (e) { return "natural"; }
+}
+export function setVoiceMode(m) {
+  try { window.localStorage.setItem(MODE_KEY, m === "quick" ? "quick" : "natural"); } catch (e) { /* ignore */ }
+}
+
 function pause(ms) { state.until = Math.max(state.until, Date.now() + ms); }
 
 export function naturalVoiceAvailable() {
   if (typeof window === "undefined" || typeof window.Audio !== "function" || typeof window.fetch !== "function") return false;
   if (typeof window.URL === "undefined" || typeof window.URL.createObjectURL !== "function") return false;
-  return !state.off && !state.blocked && Date.now() >= state.until;
+  return !state.off && !state.blocked && Date.now() >= state.until && getVoiceMode() === "natural";
 }
 
 export function naturalVoiceState() { return { ...state }; }
-export function resetNaturalVoice() { state.off = false; state.until = 0; state.blocked = false; clips.clear(); }
+export function resetNaturalVoice() { state.off = false; state.until = 0; state.blocked = false; clips.clear(); inflight.clear(); }
 
 // ---- finished sentences are kept for a while, so a line that comes again (a retry, a prompt) is instant
 const clips = new Map();
@@ -39,11 +48,26 @@ export function cachedClip(text, { lang = "", gender = "female" } = {}) {
   return clips.get(clipKey(text, lang, gender)) || null;
 }
 
+// Clips being made for a line that is not needed yet (see prefetchSpeech): whoever needs the same line next joins the request.
+const inflight = new Map();
+
 // A WAV file of the sentence, or null. `timeoutMs`: how long to wait before giving the device voice a turn.
-export async function fetchClip(text, { lang = "", gender = "female", timeoutMs = 10000, signal } = {}) {
-  const key = clipKey(text, lang, gender);
+// `shared`: the request may be joined by the next caller (for a line fetched ahead of time).
+export function fetchClip(text, opts = {}) {
+  const key = clipKey(text, opts.lang || "", opts.gender || "female");
   const hit = clips.get(key);
-  if (hit) return hit;
+  if (hit) return Promise.resolve(hit);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const p = requestClip(text, key, opts);
+  if (opts.shared) {
+    inflight.set(key, p);
+    p.then(() => { if (inflight.get(key) === p) inflight.delete(key); });
+  }
+  return p;
+}
+
+async function requestClip(text, key, { lang = "", gender = "female", timeoutMs = 10000, signal } = {}) {
   if (!naturalVoiceAvailable() || (signal && signal.aborted)) return null;
   const ctrl = new window.AbortController();
   const onAbort = () => ctrl.abort();

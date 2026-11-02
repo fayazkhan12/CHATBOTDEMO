@@ -3,13 +3,13 @@ import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pick
 import { resolvePick, hasPickIntent, isStrongReserve } from "../lib/voicecmd";
 import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
-import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight, RotateCcw, Bike, MapPin } from "lucide-react";
+import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight, RotateCcw, Bike, MapPin, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, getVoiceGender, setVoiceGender } from "../lib/tts";
+import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, setVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
 const LABELS = {
@@ -189,6 +189,7 @@ export default function Home() {
   const [voiceOutput, setVoiceOutput] = useState(true);
   const [voiceGender, setGender] = useState(getVoiceGender);     // the assistant's voice: "female" | "male"
   const [engine, setEngine] = useState("");                      // which voice spoke last: "natural" | "device"
+  const [voiceMode, setMode] = useState(getVoiceMode);             // "natural" (best sound, a few seconds per sentence) | "quick" (the device's voice at once)
   const endRef = useRef(null);
   const firstScroll = useRef(true);
   const voiceModeRef = useRef(false); // true for current send if invoked via mic
@@ -242,20 +243,21 @@ export default function Home() {
     voiceModeRef.current = fromVoice;
     setText("");
     const gender = getVoiceGender();
-    // a slow answer on a voice call: a short "hmm, one second" instead of a silent line
-    const cueTimer = fromVoice && voiceOutput ? setTimeout(() => playThinkingCue({ preferred: voiceLangRef.current, gender }), 2300) : null;
+    // the answer takes a moment (the model thinks, then the natural voice makes the sound): a short "hmm, one second" instead of
+    // a silent line. The first sound of the answer, whichever voice it is, ends the wait.
+    const cueTimer = fromVoice && voiceOutput ? setTimeout(() => playThinkingCue({ preferred: voiceLangRef.current, gender }), 900) : null;
     // the reply is spoken the moment it is final, not after the (slow) hotel search that follows it
     const hear = (clean) => {
-      clearTimeout(cueTimer);
-      if (!(voiceModeRef.current && voiceOutput && clean)) return;
+      if (!(voiceModeRef.current && voiceOutput && clean)) { clearTimeout(cueTimer); return; }
       const id = speakIdRef.current + 1;
       speakIdRef.current = id;
       setSpeakingReply(true);
       speak(clean, {
         preferred: voiceLangRef.current,
         gender,
-        onStart: setEngine,
+        onStart: (kind) => { clearTimeout(cueTimer); setEngine(kind); },
         onEnd: (spoken) => {
+          clearTimeout(cueTimer);
           if (id !== speakIdRef.current) return;      // a newer reply, the Stop button or the mic took over
           setSpeakingReply(false);
           if (spoken && voiceSessionRef.current && asksQuestion(clean)) listenAgain();
@@ -263,7 +265,7 @@ export default function Home() {
       });
     };
     const out = await sendMessage(t, { userName: user?.name || null, voice: fromVoice && voiceOutput ? gender : null, onReply: hear });
-    clearTimeout(cueTimer);
+    if (!out || out.pick) clearTimeout(cueTimer);        // nothing to wait for (a card was picked, or the chat was busy)
     if (out && out.pick) {          // "open the second one", typed
       openCardRef.current(out.pick);
     }
@@ -356,6 +358,7 @@ export default function Home() {
   const toggleVoice = () => {
     unlockAudio();                        // this tap lets the voice talk later without another tap (Safari, iPhone)
     if (listening) { voiceSessionRef.current = false; stopVoice(); return; }
+    if (voiceOutput) prefetchCues({ preferred: voiceLangRef.current, gender: getVoiceGender(), count: 1 });   // the first "hmm" is ready before the first answer
     cancelSpeech();                       // tapping the mic while the assistant talks: it stops and listens
     speakIdRef.current += 1;
     setSpeakingReply(false);
@@ -403,6 +406,16 @@ export default function Home() {
     speak(hello, { preferred: voiceLangRef.current, gender: g, onStart: setEngine, onEnd: () => { if (id === speakIdRef.current) setSpeakingReply(false); } });
   };
 
+  // Natural: sounds like a person, but each sentence takes a few seconds to make. Quick: the device's own voice, at once.
+  const switchMode = () => {
+    const m = voiceMode === "natural" ? "quick" : "natural";
+    setVoiceMode(m);
+    setMode(m);
+    setEngine("");
+    unlockAudio();
+    toast(m === "quick" ? "Quick voice: your device's own voice, no waiting." : "Natural voice: sounds like a person, takes a few seconds for each reply.", { duration: 3500 });
+  };
+
   const showStarters = messages.length <= 1;
 
   return (
@@ -425,6 +438,18 @@ export default function Home() {
           {messages.length > 1 && (
             <button className="icon-btn" onClick={newChat} title="Start a new chat" data-testid="new-chat">
               <RotateCcw size={15}/> <span className="new-chat-label">New chat</span>
+            </button>
+          )}
+          {voiceOutput && (
+            <button
+              className={voiceMode === "quick" ? "icon-btn primary" : "icon-btn"}
+              title={voiceMode === "quick" ? "Quick voice (tap for the natural voice)" : "Natural voice (tap for the quick voice)"}
+              aria-pressed={voiceMode === "quick"}
+              aria-label="Quick voice"
+              onClick={switchMode}
+              data-testid="voice-mode"
+            >
+              <Zap size={16}/>
             </button>
           )}
           <button

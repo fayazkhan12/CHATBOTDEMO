@@ -1,7 +1,7 @@
 // A small floating mic for the Detail and Checkout pages.
 // Plain DOM so it needs no changes to the page markup.
 import { createVoiceEngine, describeStop, pickDefaultLang } from "./voice";
-import { speak, stopSpeaking, unlockAudio } from "./tts.js";
+import { speak, stopSpeaking, unlockAudio, prefetchSpeech } from "./tts.js";
 import { normalizeWords, isSkip, parseName, parsePhone, parseEmail, parseCity, parseAddress, phonePartial, emailPartial, explainCity, explainAddress } from "./voicecmd";
 
 const FLOW_KEY = "dw_voice_flow";
@@ -102,6 +102,7 @@ function createDock(getConfig) {
   }
 
   // The dock talks with the same voice as the chat (natural when it is on, the device's own otherwise).
+  // `text` is a line or a list of lines ("Thanks." and the next question), each made on its own so it can come from memory.
   function say(text, cb, id) {
     let done = false;
     const fin = () => {
@@ -125,7 +126,11 @@ function createDock(getConfig) {
       if (turn.listen) timer = setTimeout(() => listen(turn.lang, id, turn.silenceMs), 300);
       else active = false;
     };
-    if (turn.say) { setNote(turn.say); say(turn.say, next, id); } else next();
+    if (turn.say) {
+      setNote(turn.say);
+      say(turn.parts || turn.say, next, id);
+      if (turn.prefetch) prefetchSpeech(turn.prefetch, { preferred: pickDefaultLang() });      // the next question is made while the visitor answers
+    } else next();
   }
 
   function listen(lang, id, silenceMs) {
@@ -302,10 +307,13 @@ export function createFormGuide(getOpts) {
   const DONE = () => getOpts().doneText || "That's everything. Please check the details on the screen, and tap Pay when you're ready.";
   const EDIT = () => getOpts().editText || "Everything's filled in. Say change, and the field name, to edit something, or tap Pay when you're ready.";
   // Phone numbers, emails and addresses come with pauses, so wait longer before cutting in.
-  const T = (say, listen) => {
+  // `parts`: the same words as separate lines, so "Thanks." (always the same few words) and each question are cached on their own;
+  // `prefetch`: lines that will be needed next, made while the visitor is answering.
+  const T = (say, listen, extra) => {
     const f = fields()[idx];
-    return { say, listen, lang: "en-IN", silenceMs: listen && f && f.dictation ? 3200 : undefined };
+    return { say, listen, lang: "en-IN", silenceMs: listen && f && f.dictation ? 3200 : undefined, ...(extra || {}) };
   };
+  const askAt = (n) => { const x = fields()[n]; return x ? [x.ask] : []; };
 
   function advance(got) {
     const f = fields();
@@ -314,7 +322,9 @@ export function createFormGuide(getOpts) {
       if (o.onDone) o.onDone();
       return T(DONE(), false);
     }
-    return T(`${got ? pick("got", GOT_IT) + " " : ""}${f[idx].ask}`, true);
+    const ack = got ? pick("got", GOT_IT) : "";
+    const ask = f[idx].ask;
+    return T(`${ack ? ack + " " : ""}${ask}`, true, { parts: ack ? [ack, ask] : [ask], prefetch: askAt(idx + 1) });
   }
 
   const inner = {
@@ -322,7 +332,9 @@ export function createFormGuide(getOpts) {
       const f = fields();
       buf = ""; partials = 0;
       if (idx >= f.length) return T(EDIT(), true);
-      return T(`${idx === 0 ? "Sure, let's fill in your details. " : ""}${f[idx].ask}`, true);
+      const opening = idx === 0 ? "Sure, let's fill in your details." : "";
+      const ask = f[idx].ask;
+      return T(`${opening ? opening + " " : ""}${ask}`, true, { parts: opening ? [opening, ask] : [ask], prefetch: [...askAt(idx + 1), ...GOT_IT] });
     },
     handle(text) {
       const raw = String(text || "");
