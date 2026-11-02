@@ -317,7 +317,7 @@ a { color: inherit; text-decoration: none; }
 }
 .agent-name { font-family: 'Jost', sans-serif; font-size: 20px; letter-spacing: -0.01em; }
 .agent-status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; font-family: 'Roboto', sans-serif; letter-spacing: 0.05em; margin-top: 2px; }
-.voice-who { background: none; border: 0; padding: 3px 0; margin: 0; color: var(--muted); font: inherit; letter-spacing: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-who { background: none; border: 0; padding: 3px 0; margin: 0; color: var(--muted); font: inherit; letter-spacing: inherit; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .voice-who:hover { color: var(--teal); }
 .status-dot { width: 7px; height: 7px; background: var(--teal); border-radius: 50%; box-shadow: 0 0 10px var(--teal); animation: breathe 2s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.4; } }
@@ -892,3 +892,88 @@ a { color: inherit; text-decoration: none; }
   .agent-actions .icon-btn { width: 38px; height: 38px; }
   .agent-actions [data-testid="new-chat"] { width: auto; padding-inline: 10px; }
 }
+
+/* --- Grocery (quick delivery, demo) --- */
+.gr-page { max-width: 1080px; margin: 0 auto; padding: 18px clamp(14px, 3vw, 28px) 110px; }
+.gr-hero { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 20px; border-radius: 18px; background: linear-gradient(135deg, #FFF3DF, #FFE2B8); border: 1px solid var(--line); margin-bottom: 14px; }
+.gr-hero h1 { margin: 0; font: 700 22px 'Jost', sans-serif; display: flex; align-items: center; gap: 8px; }
+.gr-hero p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.gr-track, .gr-cartbar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; }
+.gr-track { background: rgba(232, 130, 12, .12); border: 1px solid rgba(232, 130, 12, .4); margin-bottom: 12px; }
+.gr-go { margin-left: auto; display: inline-flex; align-items: center; font-weight: 600; white-space: nowrap; }
+.gr-search { display: flex; align-items: center; gap: 8px; padding: 0 14px; height: 46px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); margin-bottom: 12px; color: var(--muted); }
+.gr-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 15px 'Roboto', sans-serif; color: var(--text); }
+.gr-search button { border: 0; background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.gr-search:focus-within { border-color: var(--teal); }
+.gr-cats { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 12px; scrollbar-width: none; }
+.gr-cats::-webkit-scrollbar { display: none; }
+.gr-cats button { flex: none; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: 600 13px 'Roboto', sans-serif; cursor: pointer; white-space: nowrap; }
+.gr-cats button.on { background: var(--teal); border-color: var(--teal); color: #05144B; }
+.gr-h { font: 700 18px 'Jost', sans-serif; margin: 18px 0 10px; }
+.gr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.gr-card { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); min-width: 0; }
+.gr-off { position: absolute; top: 8px; left: 8px; background: #1B9E5A; color: #fff; font: 700 10px 'Roboto', sans-serif; padding: 2px 6px; border-radius: 6px; }
+.gr-pic { height: 86px; display: grid; place-items: center; font-size: 46px; background: var(--surface-2); border-radius: 10px; }
+.gr-pic.sm { height: 44px; width: 44px; flex: none; font-size: 26px; }
+.gr-name { font: 600 14px 'Roboto', sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 36px; overflow-wrap: anywhere; }
+.gr-unit { color: var(--muted); font-size: 12px; }
+.gr-buy { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 6px; }
+.gr-price { display: flex; flex-direction: column; font-size: 14px; line-height: 1.2; }
+.gr-price s { color: var(--muted); font-size: 11.5px; }
+.gr-add { padding: 7px 16px; border-radius: 8px; border: 1px solid #1B9E5A; background: #F1FBF5; color: #137a45; font: 700 12.5px 'Roboto', sans-serif; cursor: pointer; }
+.gr-step { display: inline-flex; align-items: center; background: #1B9E5A; color: #fff; border-radius: 8px; overflow: hidden; }
+.gr-step button { width: 28px; height: 30px; border: 0; background: transparent; color: #fff; display: grid; place-items: center; cursor: pointer; }
+.gr-step button:disabled { opacity: .5; cursor: not-allowed; }
+.gr-step span { min-width: 18px; text-align: center; font: 700 13px 'Roboto', sans-serif; }
+.gr-cartbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 70; width: min(560px, calc(100vw - 24px)); background: #1B9E5A; color: #fff; border: 0; cursor: pointer; box-shadow: 0 10px 28px rgba(5, 20, 75, .28); font-family: 'Roboto', sans-serif; }
+.gr-back { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.gr-title { font: 700 24px 'Jost', sans-serif; margin: 0 0 14px; }
+.gr-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.gr-box { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 14px; margin-bottom: 14px; }
+.gr-h2 { font: 700 16px 'Jost', sans-serif; margin: 0 0 10px; }
+.gr-nudge { padding: 8px 10px; border-radius: 8px; background: #FFF3DF; color: #7A4A06; font-size: 13px; margin-bottom: 8px; }
+.gr-nudge.ok { background: #E7F7EE; color: #137a45; }
+.gr-line { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.gr-line:first-of-type { border-top: 0; }
+.gr-lname { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 14px; overflow-wrap: anywhere; }
+.gr-lname small { color: var(--muted); font-size: 12px; }
+.gr-ltotal { min-width: 56px; text-align: right; font-weight: 700; font-size: 14px; }
+.gr-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gr-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.gr-form label.wide { grid-column: 1 / -1; }
+.gr-form input { height: 42px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 12px; font: 500 15px 'Roboto', sans-serif; color: var(--text); background: var(--surface); min-width: 0; }
+.gr-form input:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
+.gr-form em { color: var(--red); font-style: normal; font-size: 12px; }
+.gr-bill { position: sticky; top: 90px; }
+.gr-coupon { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--muted); }
+.gr-coupon input { flex: 1; min-width: 0; height: 38px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 10px; font: 500 14px 'Roboto', sans-serif; text-transform: uppercase; }
+.gr-coupon .btn-ghost { padding: 8px 14px; }
+.gr-ok { color: #137a45; } .gr-warn { color: #92580a; }
+.gr-bill dl, .gr-billro { margin: 10px 0; display: grid; gap: 6px; }
+.gr-bill dl div, .gr-billro div { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+.gr-bill dt, .gr-billro dt { color: var(--muted); } .gr-bill dd, .gr-billro dd { margin: 0; font-weight: 600; }
+.gr-bill .tot, .gr-billro .tot { border-top: 1px dashed var(--line-strong); padding-top: 8px; font-size: 16px; } .tot dt { color: var(--text) !important; font-weight: 700; }
+.gr-save { padding: 8px 10px; border-radius: 8px; background: #E7F7EE; color: #137a45; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.gr-pay { display: grid; gap: 6px; margin: 10px 0; }
+.gr-pay label { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px; cursor: pointer; }
+.gr-pay label.on { border-color: var(--teal); background: #FFF8EE; }
+.gr-place { width: 100%; padding: 14px; font-size: 15px; }
+.gr-demo { display: block; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.gr-status h1 { margin: 6px 0 10px; font: 700 24px 'Jost', sans-serif; }
+.gr-status.delivered { background: #E7F7EE; } .gr-status.cancelled { background: #FDEBEA; }
+.gr-bar { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-bottom: 8px; }
+.gr-bar i { display: block; height: 100%; background: #1B9E5A; transition: width 1s linear; }
+.gr-otp { background: #FFF3DF; padding: 8px 10px; border-radius: 8px; display: inline-block; }
+.gr-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.gr-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.gr-steps li span { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line-strong); display: grid; place-items: center; color: #fff; flex: none; }
+.gr-steps li.done { color: var(--text); font-weight: 600; } .gr-steps li.done span { background: #1B9E5A; border-color: #1B9E5A; }
+.gr-rider { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.gr-rider div { display: flex; flex-direction: column; flex: 1; min-width: 0; } .gr-rider small { color: var(--muted); }
+.gr-phone { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.gr-addr { margin: 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.gr-cancel { margin: 0 0 10px; }
+.gr-orderpage { max-width: 640px; }
+.gr-card-chat { margin-top: 8px; }
+@media (max-width: 800px) { .gr-cols { grid-template-columns: minmax(0, 1fr); } .gr-bill { position: static; } }
+@media (max-width: 420px) { .gr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .gr-form { grid-template-columns: minmax(0, 1fr); } .gr-hero h1 { font-size: 19px; } .gr-card { padding: 9px; } }

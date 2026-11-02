@@ -14,6 +14,9 @@ import Rides from "./pages/Rides";
 import RideTrack from "./pages/RideTrack";
 import RideReceipt from "./pages/RideReceipt";
 import RideShare from "./pages/RideShare";
+import Grocery from "./pages/Grocery";
+import GroceryCart from "./pages/GroceryCart";
+import GroceryOrder from "./pages/GroceryOrder";
 import ActiveRideBar from "./components/ActiveRideBar";
 import "./App.css";
 import GlobalVoice from "./lib/GlobalVoice";
@@ -48,6 +51,9 @@ function Shell() {
         <Route path="/ride/share/:token" element={<RideShare />} />
         <Route path="/ride/:id" element={<RideTrack />} />
         <Route path="/ride/:id/receipt" element={<RideReceipt />} />
+        <Route path="/grocery" element={<Grocery />} />
+        <Route path="/grocery/cart" element={<GroceryCart />} />
+        <Route path="/grocery/order/:id" element={<GroceryOrder />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>

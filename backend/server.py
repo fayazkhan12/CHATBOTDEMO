@@ -1428,7 +1428,7 @@ _REFUSAL_TEXT = {
     "no_ride_places": "ask_places", "same_place": "same_place", "bad_place": "bad_place", "past_time": "past_time", "far_time": "far_time",
     "city_not_found": "city_not_found", "past_date": "past_date", "no_date": "ask_date", "no_nights": "ask_nights",
     "too_long": "bad_nights", "bad_travellers": "bad_travellers",
-    "child_ages": "ask_child_ages", "bad_rooms": "bad_rooms",
+    "child_ages": "ask_child_ages", "bad_rooms": "bad_rooms", "no_items": "ask_grocery",
 }
 
 
@@ -1480,6 +1480,20 @@ def _same_place(a: Any, b: Any) -> bool:
     """The same city, allowing the usual alternate names (Bombay = Mumbai) and a label like "Jaipur, Rajasthan, India"."""
     a, b = str(a or "").split(",")[0].strip(), str(b or "").split(",")[0].strip()
     return bool(a and b and (_names_for(a) & _names_for(b)))
+
+
+def _fix_grocery_block(raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """A grocery list from the chat: up to 15 short lines such as "2 milk" or "bread"."""
+    items = raw.get("items")
+    if isinstance(items, str):
+        items = re.split(r"[,;\n]| aur | and ", items)
+    if not isinstance(items, list):
+        return None, "no_items"
+    lines = [re.sub(r"\s+", " ", re.sub(r"[<>]", " ", _clean(i, 60))).strip() for i in items if isinstance(i, (str, int))]
+    lines = [x for x in lines if x][:15]
+    if not lines:
+        return None, "no_items"
+    return {"service": "grocery", "items": lines}, "ok"
 
 
 def _fix_ride_block(raw: Dict[str, Any], today: Optional[date] = None) -> Tuple[Optional[Dict[str, Any]], str]:
@@ -1554,10 +1568,12 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
     service = str(raw.get("service") or "").strip().lower()
     if service == "cabs":
         service = "rides"
-    if service not in ("hotels", "flights", "buses", "rides"):
+    if service not in ("hotels", "flights", "buses", "rides", "grocery"):
         return None, "bad_service"
     if service == "rides":
         return _fix_ride_block(raw, today)
+    if service == "grocery":
+        return _fix_grocery_block(raw)
     raw = dict(raw)
     trip = trip if (trip and trip.get("service") == service) else None
     dest = _clean(raw.get("destination"), 80)
@@ -1803,6 +1819,10 @@ SYSTEM_PROMPT = (
     "when: \"now\" unless the visitor gives a pickup time, then \"YYYY-MM-DD HH:MM\" in 24-hour India time ('kal subah 6 baje' = tomorrow 06:00). "
     "Write each place with its city when you know it. 'My hotel' / 'mere hotel' = the hotel in CONVERSATION MEMORY (use its exact name and city); 'airport' or 'railway station' without a city = the one in the current trip's city; "
     "'here' / 'my location' / 'yahan se' = pickup \"Current location\". For a ride the visitor taps a vehicle to book: say so in one short line.\n"
+    "GROCERY: DestinoWay also delivers groceries in minutes (a demo store with milk, bread, vegetables, atta, snacks and more). When the visitor wants groceries "
+    "(kirana, doodh, sabzi, 'order milk and bread'), do not ask for dates or a city: END your reply with <search>{\"service\":\"grocery\",\"items\":[\"2 milk\",\"bread\",\"1 kg potato\"]}</search> "
+    "with each thing they named as a short line (a number first if they gave one). Say in one short line that the items are ready to add to the cart and they can change the quantities there. "
+    "If they only say they want groceries without naming anything, ask ONE short question what they need and write no block.\n"
     "AREA: if the user names a neighbourhood, landmark, railway station or airport (for example Sindhi Camp, C-Scheme, Jaipur Railway Station), "
     "put it in the block as \"area\" and keep destination as the CITY. You CAN show hotels near an area: never say you cannot filter by area, and never ask for the area yourself.\n"
     "Before the block, write ONE short line in the user's language, like 'Perfect, showing options now.' (in the user's language). The UI will render live cards from the block. "
@@ -2112,6 +2132,15 @@ try:  # bike / auto / cab rides; an optional feature must never stop the API fro
     app.include_router(_rides.router)
 except Exception:
     logger.exception("rides are switched off")
+try:  # quick grocery delivery (demo); optional like the rides
+    try:
+        import grocery as _grocery
+    except ImportError:
+        from backend import grocery as _grocery
+    _grocery.setup(db=lambda: db, current_user=current_user, optional_user=optional_user, rate_limit=_rate_limit, client_ip=_client_ip, secret=JWT_SECRET)
+    app.include_router(_grocery.router)
+except Exception:
+    logger.exception("grocery is switched off")
 try:  # a natural spoken voice (Gemini speech); the website falls back to the browser's voice when this is off or busy
     try:
         import voice_tts as _voice_tts

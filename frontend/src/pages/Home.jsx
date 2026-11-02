@@ -3,13 +3,13 @@ import { createVoiceEngine, VOICE_LANGS, shouldSendUtterance, describeStop, pick
 import { resolvePick, hasPickIntent, isStrongReserve } from "../lib/voicecmd";
 import { markVoiceFlow } from "../lib/voicedock";
 import { useNavigate } from "react-router-dom";
-import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight, RotateCcw, Bike, MapPin, Zap } from "lucide-react";
+import { Mic, Send, Sparkles, Plane, Hotel, BusFront, Car, Volume2, VolumeX, ArrowRight, RotateCcw, Bike, MapPin, Zap, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, setVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
+import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
 const LABELS = {
@@ -36,7 +36,7 @@ const LABELS = {
 // What the chat says under its reply while a search is running, and when the search finds nothing
 const SEARCH_LABELS = {
   en: {
-    wait: (service) => (service === "hotels" ? "Checking live hotel prices. This can take up to a minute." : "Finding the best options..."),
+    wait: (service) => (service === "hotels" ? "Checking live hotel prices. This can take up to a minute." : service === "grocery" ? "Finding your items..." : "Finding the best options..."),
     none: "No options found for these dates and place. Try other dates or another city.",
   },
   hinglish: {
@@ -55,6 +55,7 @@ const QUICK_STARTERS = [
   { label: "Mumbai to Pune bus", icon: BusFront },
   { label: "Bike ride in Jaipur", icon: Bike },
   { label: "Airport cab Bangalore", icon: Car },
+  { label: "Order milk and bread", icon: ShoppingBag },
 ];
 
 const INR = (n) => `₹${Math.round(Number(n) || 0).toLocaleString("en-IN")}`;
@@ -99,7 +100,26 @@ function CardPhoto({ card }) {
   return <img src={card.image} alt={card.title} onError={() => setBroken(true)}/>;
 }
 
-const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
+// A grocery list from the chat: what was found on the shelf. One tap puts it all in the cart and opens the store.
+function GroceryChat({ grocery, onOpen }) {
+  const items = grocery.items || [];
+  const total = items.reduce((a, i) => a + i.price * i.qty, 0);
+  return (
+    <div className="ride-quote" data-testid="chat-grocery">
+      {items.map((i) => (
+        <div className="ride-quote-row" key={i.id} data-testid={`chat-gr-${i.id}`}>
+          <span className="ride-quote-name"><span><span aria-hidden="true">{i.emoji}</span> {i.name}</span><small>{i.unit} x {i.qty}</small></span>
+          <b>{INR(i.price * i.qty)}</b>
+        </div>
+      ))}
+      {grocery.missing && grocery.missing.length > 0 && <small className="ride-quote-note" data-testid="chat-gr-missing">Not found: {grocery.missing.join(", ")}</small>}
+      <small className="ride-quote-note">Demo store: nothing is delivered or charged.</small>
+      <button className="inline-cta" onClick={() => onOpen(items)} data-testid="chat-gr-open">{items.length ? `Add to cart · ${INR(total)}` : "Browse the store"} <ArrowRight size={12} /></button>
+    </div>
+  );
+}
+
+const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onRetry }) => (
   <div className={`chat-row ${msg.role}`} data-testid={`chat-row-${msg.role}`}>
     <div className="chat-avatar-lg">
       {msg.role === "assistant" ? <Sparkles size={16} /> : <span>You</span>}
@@ -131,6 +151,7 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onRetry }) => (
           <small>{msg.note || (SEARCH_LABELS[msg.lang] || SEARCH_LABELS.en).none}</small>
         </div>
       )}
+      {msg.grocery && <GroceryChat grocery={msg.grocery} onOpen={onOpenGrocery} />}
       {msg.ride && <RideQuote ride={msg.ride} onOpen={(vehicle) => onOpenRide(msg.ride, vehicle)} />}
       {msg.cards?.length > 0 && (
         <div className="inline-cards">
@@ -187,7 +208,6 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [speakingReply, setSpeakingReply] = useState(false);
   const [voiceOutput, setVoiceOutput] = useState(true);
-  const [voiceGender, setGender] = useState(getVoiceGender);     // the assistant's voice: "female" | "male"
   const [engine, setEngine] = useState("");                      // which voice spoke last: "natural" | "device"
   const [voiceMode, setMode] = useState(getVoiceMode);             // "natural" (best sound, a few seconds per sentence) | "quick" (the device's voice at once)
   const endRef = useRef(null);
@@ -223,6 +243,7 @@ export default function Home() {
 
   openCardRef.current = openCard;
 
+  const openGrocery = (items) => navigate(items.length ? `/grocery?add=${items.map((i) => `${i.id}:${i.qty}`).join(",")}` : "/grocery");
   const openRide = (ride, vehicle) => navigate(rideUrl({ pickup: ride.pickup, drop: ride.drop, vehicle, when: ride.when }));
 
   const loadMore = (msg) => storeLoadMore(msg.id);
@@ -389,23 +410,6 @@ export default function Home() {
     setSpeakingReply(false);
   };
 
-  // Tap to hear the other voice: it says a short hello, so the choice can be made by ear.
-  const switchVoice = () => {
-    const g = voiceGender === "female" ? "male" : "female";
-    setVoiceGender(g);
-    setGender(g);
-    unlockAudio();
-    if (!voiceOutput) return;
-    const id = speakIdRef.current + 1;
-    speakIdRef.current = id;
-    voiceSessionRef.current = false;
-    setSpeakingReply(true);
-    const hello = String(voiceLangRef.current).startsWith("hi")
-      ? "नमस्ते! DestinoWay में आपका स्वागत है। कहाँ घूमने चलना है?"
-      : "Hi, welcome to DestinoWay. Where would you like to go?";
-    speak(hello, { preferred: voiceLangRef.current, gender: g, onStart: setEngine, onEnd: () => { if (id === speakIdRef.current) setSpeakingReply(false); } });
-  };
-
   // Natural: sounds like a person, but each sentence takes a few seconds to make. Quick: the device's own voice, at once.
   const switchMode = () => {
     const m = voiceMode === "natural" ? "quick" : "natural";
@@ -426,11 +430,9 @@ export default function Home() {
           <div>
             <div className="agent-name">DestinoWay AI</div>
             <div className="agent-status">
-              {voiceOutput && (
-                <button type="button" className="voice-who" onClick={switchVoice} data-testid="voice-gender" title="Tap to hear the other voice">
-                  {voiceGender === "female" ? "Female voice" : "Male voice"}{engine ? ` · ${engine === "natural" ? "natural" : "device"}` : ""}
-                </button>
-              )}
+              <span className="voice-who" data-testid="voice-status">
+                AI assistant{voiceOutput && engine ? ` · ${engine === "natural" ? "natural" : "device"} voice` : ""}
+              </span>
             </div>
           </div>
         </div>
@@ -468,7 +470,7 @@ export default function Home() {
 
       <div className="agent-messages" data-testid="agent-messages">
         {messages.map((m) => (
-          <MessageBubble key={m.id} msg={m} onOpenCard={openCard} onMore={loadMore} onOpenRide={openRide} onRetry={retry}/>
+          <MessageBubble key={m.id} msg={m} onOpenCard={openCard} onMore={loadMore} onOpenRide={openRide} onOpenGrocery={openGrocery} onRetry={retry}/>
         ))}
         <div ref={endRef}/>
       </div>

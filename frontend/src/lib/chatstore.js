@@ -23,7 +23,7 @@ const STORAGE_BUDGET = 1_400_000;         // characters of result cards kept in 
 export const GREETING = {
   id: "greet",
   role: "assistant",
-  text: "Hi! I am DestinoWay, your travel concierge. Hotels, flights, buses or rides: what do you need? You can talk to me in any language.",
+  text: "Hi! I am DestinoWay, your travel concierge. Hotels, flights, buses, rides or groceries: what do you need? You can talk to me in any language.",
 };
 
 const fresh = (owner = "guest") => ({ owner, messages: [GREETING], trip: null, selection: null, updatedAt: 0, sending: false });
@@ -148,7 +148,7 @@ export function extractSearchIntent(text) {
   }
 }
 
-const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "area", "pickup", "drop", "vehicle", "when"];
+const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "area", "pickup", "drop", "vehicle", "when", "items"];
 const plainIntent = (intent) => Object.fromEntries(KEEP_KEYS.filter((k) => intent[k] !== undefined && intent[k] !== null && intent[k] !== "").map((k) => [k, intent[k]]));
 
 function historyForServer(messages) {
@@ -245,6 +245,7 @@ function chatLang(replyText) {
 export async function runSearch(intent, replyId) {
   const lang = chatLang(state.messages.find((m) => m.id === replyId)?.text);
   if (intent.service === "rides") return runRideQuote(intent, replyId, lang);
+  if (intent.service === "grocery") return runGrocery(intent, replyId, lang);
   patchMessage(replyId, { searching: intent.service, noResults: false, interrupted: undefined, lang });
   try {
     const body = {
@@ -274,6 +275,20 @@ export async function runSearch(intent, replyId) {
     setMessages((prev) => [
       ...prev.map((m) => (m.id === replyId ? { ...m, searching: false, interrupted: intent.service } : m)),
       { id: `err-${Date.now()}`, role: "assistant", text: "Search failed. Please try again in a moment." },
+    ]);
+  }
+}
+
+// A grocery list from the chat ("2 milk, bread"): the items found on the shelf, shown as a card that fills the cart.
+async function runGrocery(intent, replyId, lang) {
+  patchMessage(replyId, { searching: "grocery", noResults: false, interrupted: undefined, lang });
+  try {
+    const { data } = await http.post("/grocery/match", { items: (intent.items || []).slice(0, 15).map(String) });
+    patchMessage(replyId, { searching: false, grocery: { items: data.items || [], missing: data.missing || [] }, cards: undefined, noResults: false, lang });
+  } catch (e) {
+    setMessages((prev) => [
+      ...prev.map((m) => (m.id === replyId ? { ...m, searching: false } : m)),
+      { id: `err-${Date.now()}`, role: "assistant", text: "I could not look that up right now. Please try again." },
     ]);
   }
 }
@@ -416,9 +431,10 @@ export async function sendMessage(text, { userName = null, voice = null, onReply
 
   const { clean: rawClean, intent } = extractSearchIntent(answer);
   const clean = guardReply(rawClean);
-  const searchable = !!(intent && intent.service && (intent.destination || (intent.service === "rides" && intent.pickup && intent.drop)));
-  patchMessage(replyId, { text: clean, streaming: false, ...(searchable ? { search: plainIntent(intent) } : {}) });
-  if (searchable) set({ trip: plainIntent(intent) });
+  const grocery = !!(intent && intent.service === "grocery" && Array.isArray(intent.items) && intent.items.length);
+  const searchable = grocery || !!(intent && intent.service && (intent.destination || (intent.service === "rides" && intent.pickup && intent.drop)));
+  patchMessage(replyId, { text: clean, streaming: false, ...(searchable && !grocery ? { search: plainIntent(intent) } : {}) });
+  if (searchable && !grocery) set({ trip: plainIntent(intent) });         // a grocery list does not replace the trip being planned
   set({ sending: false });
   if (onReply) { try { onReply(clean, searchable ? intent : null); } catch { /* the caller's problem */ } }     // spoken now, not after the hotel search
   if (searchable) await runSearch(intent, replyId);

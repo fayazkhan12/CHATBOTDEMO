@@ -740,6 +740,11 @@ FIXED = {
         "hinglish": "Ride 30 din aage tak ki schedule ho sakti hai. Kaunsa din aur time?",
         "hi": "राइड 30 दिन आगे तक की शेड्यूल हो सकती है। कौन सा दिन और समय?",
     },
+    "ask_grocery": {
+        "en": "What would you like to order? For example, 2 milk, bread and potatoes.",
+        "hinglish": "Kya mangwana hai? Jaise 2 doodh, bread aur aloo.",
+        "hi": "क्या मँगवाना है? जैसे 2 दूध, ब्रेड और आलू।",
+    },
     "area_missing": {
         "en": "(I could not find the exact spot for {area}, so I am showing hotels across {dest}.)",
         "hinglish": "({area} ka exact location nahi mila, isliye poore {dest} ke hotels dikhaye ja rahe hain.)",

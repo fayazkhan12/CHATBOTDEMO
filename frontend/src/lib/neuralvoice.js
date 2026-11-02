@@ -7,15 +7,11 @@
 const base = () => `${process.env.REACT_APP_BACKEND_URL || ""}/api`;
 
 const state = { off: false, until: 0, blocked: false };       // off: not set up on the server; until: paused; blocked: needs a tap first
-const GENDER_KEY = "dw_voice_gender";
 const MODE_KEY = "dw_voice_mode";
 
-export function getVoiceGender() {
-  try { return window.localStorage.getItem(GENDER_KEY) === "male" ? "male" : "female"; } catch (e) { return "female"; }
-}
-export function setVoiceGender(g) {
-  try { window.localStorage.setItem(GENDER_KEY, g === "male" ? "male" : "female"); } catch (e) { /* ignore */ }
-}
+// One voice for the whole site: a woman's. (The server still understands "male", but nothing asks for it.)
+export function getVoiceGender() { return "female"; }
+export function setVoiceGender() { /* one voice only */ }
 
 // "natural": the speech model (the best sound, but a few seconds to make each sentence); "quick": the device's own voice at once.
 export function getVoiceMode() {
