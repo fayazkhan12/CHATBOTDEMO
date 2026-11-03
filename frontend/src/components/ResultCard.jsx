@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Clock3, MapPin, Star, Plane, Hotel, BusFront, Car, ArrowRight } from "lucide-react";
-import { money, clockTime, plural } from "../lib/format";
+import { money, clockTime, plural, perNightLine } from "../lib/format";
 
 const typeIcon = { flight: Plane, hotel: Hotel, bus: BusFront, cab: Car };
 
@@ -39,6 +39,7 @@ export default function ResultCard({ item, onOpen }) {
           <small>{isLive ? "Live price" : "Sample price"}</small>
           <strong>{money(item.price)}</strong>
           {item.type === "hotel" && nights > 0 ? <small>{plural(nights, "night")} total</small> : null}
+          {perNightLine(item) ? <small data-testid="per-night">{perNightLine(item)}</small> : null}
         </div>
         <button className="result-cta" data-testid={`book-btn-${item.id}`} onClick={(e) => { e.stopPropagation(); onOpen(item); }}>
           View <ArrowRight size={14}/>

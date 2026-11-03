@@ -13,6 +13,7 @@ import { useSyncExternalStore } from "react";
 import { API, http } from "./api";
 import { guardReply } from "./guard";
 import { hasPickIntent, resolvePick } from "./voicecmd";
+import { perNightLine } from "./format";
 
 const STORE_KEY = "dw_chat_v1";
 const KEEP_MS = 12 * 60 * 60 * 1000;      // a chat is kept for 12 hours after its last message
@@ -164,6 +165,7 @@ function digestOf(card) {
   const nights = Number(card.nights) || 0;
   const bits = [];
   if (card.type === "hotel" && nights) bits.push(`${nights} night${nights === 1 ? "" : "s"} total`);
+  if (perNightLine(card)) bits.push(perNightLine(card));
   if (card.departure) bits.push(`${hhmm(card.departure)}${card.arrival ? "-" + hhmm(card.arrival) : ""}`);
   if (card.duration) bits.push(card.duration);
   return {

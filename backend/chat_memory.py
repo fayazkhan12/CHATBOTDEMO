@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 SERVICES = ("hotels", "flights", "buses", "rides")      # "cabs" is the old name of "rides"
 TIERS = ("low", "medium", "high")
+# what each budget tier means: a fixed price per room per night (the same limits as TIER_BANDS in server.py)
+TIER_TEXT = {"low": "under Rs 1500 per room per night", "medium": "Rs 1500 to Rs 3000 per room per night", "high": "over Rs 3000 per room per night"}
 VEHICLES = ("bike", "auto", "cab", "any")
 
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -274,7 +276,7 @@ def describe_trip(trip: Dict[str, Any]) -> str:
     if service == "hotels" and (trip.get("rooms") or 1) > 1:
         bits.append(f"{trip['rooms']} rooms")
     if trip.get("budget_tier"):
-        bits.append(f"budget tier {trip['budget_tier']}")
+        bits.append(f"budget tier {trip['budget_tier']} ({TIER_TEXT.get(trip['budget_tier'], '')})")
     elif trip.get("budget"):
         bits.append(f"maximum budget Rs {int(trip['budget'])}")
     return ", ".join(bits)
@@ -406,6 +408,24 @@ def asks_budget(spoken: str) -> bool:
 
 def has_budget_cue(user_message: str) -> bool:
     return bool(user_message and _CUE_BUDGET.search(user_message))
+
+
+_TIER_WORDS = (
+    re.compile(r"\bsast[ao]a?\b|\bsasti\b|\bcheap\b|\blow\b|सस्ता", re.I),
+    re.compile(r"\bmadhyam\b|\bmedium\b|\bmid\b|मध्यम", re.I),
+    re.compile(r"\bpremium\b|\bhigh\b|\bluxury\b|प्रीमियम", re.I),
+)
+_RANGE_GIVEN = re.compile(r"1[,.]?500")
+
+
+def offers_tiers(spoken: str) -> bool:
+    """The reply asks the visitor to pick between the budget choices (at least two of cheap / medium / premium)."""
+    return "?" in (spoken or "") and sum(1 for p in _TIER_WORDS if p.search(spoken)) >= 2
+
+
+def states_ranges(spoken: str) -> bool:
+    """The reply already says what the budget choices cost (the 1500 limit is in it)."""
+    return bool(_RANGE_GIVEN.search(spoken or ""))
 
 
 def asks_known_slot(spoken: str, trip: Optional[Dict[str, Any]], user_message: str) -> bool:
@@ -654,6 +674,11 @@ FIXED = {
         "en": "Tell me what to change: dates, guests, budget or city.",
         "hinglish": "Bataiye kya badalna hai: dates, log, budget ya shehar.",
         "hi": "बताइए क्या बदलना है: तारीख, लोग, बजट या शहर।",
+    },
+    "budget_ranges": {
+        "en": "Cheap is under ₹1,500, medium is ₹1,500 to ₹3,000 and premium is over ₹3,000, per room per night.",
+        "hinglish": "Sasta ₹1,500 se kam, madhyam ₹1,500 se ₹3,000 tak aur premium ₹3,000 se upar, per room per night.",
+        "hi": "सस्ता ₹1,500 से कम, मध्यम ₹1,500 से ₹3,000 तक और प्रीमियम ₹3,000 से ऊपर, प्रति कमरा प्रति रात।",
     },
     "ask_city": {
         "en": "Which city should I look in? Please tell me the city name again.",

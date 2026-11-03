@@ -110,3 +110,14 @@ export function demoBookingNote(item) {
     ? "Demo booking. The room and price are live, but this reservation is not sent to the hotel and no real money is charged."
     : "Demo booking. Sample data only: no real ticket is issued and no real money is charged.";
 }
+
+// A hotel offer's price is for the whole stay. The per-night price of ONE room ("₹2,100 per night") is what budgets are about;
+// "" when it would only repeat the total (one night, one room) or the offer is not a hotel stay.
+export function perNightLine(item) {
+  if (!item || item.type !== "hotel") return "";
+  const nights = Number(item.nights) || 0;
+  const rooms = Math.max(1, Number(item.rooms) || 1);
+  const price = Number(item.price) || 0;
+  if (nights < 1 || price <= 0 || (nights === 1 && rooms === 1)) return "";
+  return `${money(price / nights / rooms)} per night${rooms > 1 ? " per room" : ""}`;
+}

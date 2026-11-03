@@ -97,8 +97,20 @@ AKBAR_HOST = os.environ.get("AKBAR_API_HOST", "").rstrip("/")
 HOTEL_API_BASE = os.environ.get("HOTEL_API_BASE", f"{AKBAR_HOST}/api/v1/hotelSearch")
 
 PAGE_SIZE = 12
-# which part of the price-sorted list each budget tier shows (0 = cheapest, 1 = most expensive)
-TIER_PCT = {"low": 0.15, "medium": 0.5, "high": 0.85}
+# The three budget choices are fixed prices in rupees PER ROOM PER NIGHT: low (sasta) = under 1500, medium (madhyam) = 1500 to 3000,
+# high (premium) = over 3000. (lowest, highest) of the price window; None = no upper limit.
+TIER_BANDS = {"low": (0, 1500), "medium": (1500, 3000), "high": (3000, None)}
+TIER_NAMES = {"low": "under ₹1,500", "medium": "₹1,500 to ₹3,000", "high": "over ₹3,000"}
+
+
+def _tier_window(tier: Optional[str], nights: int, rooms: int) -> Optional[Tuple[float, Optional[float]]]:
+    """The price window of a budget tier for THIS stay. The supplier's price is the total of every room and every night,
+    so the per-room-per-night limits are multiplied by both. None when there is no such tier."""
+    band = TIER_BANDS.get(tier or "")
+    if not band:
+        return None
+    k = max(1, int(nights)) * max(1, int(rooms))
+    return float(band[0] * k), (float(band[1] * k) if band[1] is not None else None)
 
 logger = logging.getLogger("destinoway")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -452,23 +464,28 @@ async def _resolve_area(city: str, area: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRequest") -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
-    """Scan the results, keep the hotels closest to the area, then apply the budget tier / page inside that nearby set."""
+async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRequest",
+                       window: Optional[Tuple[float, Optional[float]]] = None, skip: int = 0) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
+    """Scan the results, keep the hotels closest to the area, then page through them cheapest first.
+    `window`: the price window of the budget tier (only hotels inside it are kept); `total`: how many results `fetch` can give
+    (those under the top of the window) and `skip`: how many of them are cheaper than the window (the scan starts after them)."""
     limit = AREA_PAGE_LIMIT
-    first = await fetch(1, limit)
+    first_page = skip // limit + 1
+    first = await fetch(first_page, limit)
     if not first:                      # the supplier refuses big pages: use the normal size
         limit = PAGE_SIZE
-        first = await fetch(1, limit)
+        first_page = skip // limit + 1
+        first = await fetch(first_page, limit)
     if not first or not first.get("items"):
         return None
-    pages = max(1, min(AREA_MAX_PAGES, math.ceil(total / limit)))
+    last_page = max(first_page, min(first_page + AREA_MAX_PAGES - 1, math.ceil(total / limit)))
     sem = asyncio.Semaphore(5)
 
     async def one(page: int):
         async with sem:
             return await fetch(page, limit)
 
-    rest = await asyncio.gather(*(one(pg) for pg in range(2, pages + 1))) if pages > 1 else []
+    rest = await asyncio.gather(*(one(pg) for pg in range(first_page + 1, last_page + 1))) if last_page > first_page else []
     seen: set = set()
     scored: List[Tuple[float, Dict[str, Any]]] = []
     for chunk in [first, *rest]:
@@ -477,6 +494,13 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
             g = h.get("geoCode") or {}
             if hid in seen:
                 continue
+            if window:
+                try:
+                    price = float((h.get("price") or {}).get("totalPrice") or 0)
+                except (TypeError, ValueError):
+                    price = 0.0
+                if price <= 0 or price < window[0] or (window[1] is not None and price > window[1]):
+                    continue
             try:
                 dist = _km(center["lat"], center["long"], float(g["lat"]), float(g["long"]))
             except (KeyError, TypeError, ValueError):
@@ -484,18 +508,14 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
             seen.add(hid)
             scored.append((dist, h))
     if not scored:
-        return None
+        return ([], 0) if window else None
     scored.sort(key=lambda x: x[0])
     pool = [x for x in scored if x[0] <= AREA_RADIUS_KM]
     if len(pool) < PAGE_SIZE:          # nothing really close: show the nearest ones instead of nothing
         pool = scored[:PAGE_SIZE]
     pool = pool[:AREA_POOL]
     pool.sort(key=lambda x: float((x[1].get("price") or {}).get("totalPrice") or 0))
-    start = 0
-    if req.budget is None and req.budget_tier in TIER_PCT:
-        start = int(len(pool) * TIER_PCT[req.budget_tier])
-    start = min(start, max(0, len(pool) - PAGE_SIZE))
-    start = min(start + (req.page - 1) * PAGE_SIZE, max(0, len(pool) - 1))
+    start = min((req.page - 1) * PAGE_SIZE, max(0, len(pool) - 1))
     return pool[start:start + PAGE_SIZE], len(pool)
 
 
@@ -620,10 +640,11 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 logger.warning("No searchId in response")
                 return None
 
-            async def fetch(page: int, limit: int = PAGE_SIZE) -> Optional[Dict[str, Any]]:
+            async def fetch(page: int, limit: int = PAGE_SIZE, max_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
                 params: Dict[str, Any] = {"page": page, "limit": limit, "sortBy": "price", "sortOrder": "asc"}
-                if req.budget:
-                    params["maxPrice"] = req.budget
+                cap = max_price if max_price is not None else req.budget
+                if cap:
+                    params["maxPrice"] = cap
                 rr = await c.get(f"{HOTEL_API_BASE}/search/{sid}", params=params)
                 if rr.status_code != 200:
                     return None
@@ -647,21 +668,88 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             total = int((data.get("pagination") or {}).get("total") or len(data["items"]))
             city_label = str((pick or {}).get("label") or req.destination)
 
+            # a budget tier is a fixed price window (per room per night): the results are sorted by price, so the window is the slice
+            # between "how many cost up to its bottom" and "how many cost up to its top" (the supplier counts them for us)
+            try:
+                nights = max(1, (date.fromisoformat(req.end_date) - date.fromisoformat(req.start_date)).days)
+            except ValueError:
+                nights = 1
+            window = _tier_window(req.budget_tier, nights, min(req.rooms, req.travellers)) if req.budget is None else None
+            n_lo, n_hi = 0, total
+            if window:
+                async def count_under(cap: Optional[float]) -> Optional[int]:
+                    """How many hotels cost up to `cap` (all of them when None); None when the supplier did not say."""
+                    for _ in range(2):
+                        d = await fetch(1, PAGE_SIZE, cap)
+                        if d is None:                   # the supplier answered with an error: try once more
+                            continue
+                        pag = d.get("pagination")
+                        if isinstance(pag, dict) and pag.get("total") is not None:
+                            try:
+                                return max(0, int(pag["total"]))
+                            except (TypeError, ValueError):
+                                return None
+                        return 0 if not d.get("items") else None
+                    return None
+
+                n_hi = await count_under(window[1])
+                if window[0] > 0 and n_hi:
+                    n_lo = await count_under(window[0] - 1)
+                if n_hi is None or n_lo is None:
+                    logger.warning("Hotel price window could not be counted (tier=%s)", req.budget_tier)
+                    return None
+                n_lo = min(n_lo, n_hi)
+                if n_hi - n_lo <= 0:
+                    return {"items": [], "total": 0, "page": 1,
+                            "note": f"No hotels {TIER_NAMES[req.budget_tier]} per room per night here for these dates. Try another budget."}
+
             near = None
             center = await _resolve_area(city_label, req.area) if req.area else None
             if center:
-                near = await _hotels_near(fetch, total, center, req)
+                if window:
+                    cap_hi = window[1]
+
+                    async def fetch_window(page: int, limit: int = PAGE_SIZE) -> Optional[Dict[str, Any]]:
+                        return await fetch(page, limit, cap_hi)
+
+                    near = await _hotels_near(fetch_window, n_hi, center, req, window, n_lo)
+                else:
+                    near = await _hotels_near(fetch, total, center, req)
 
             if near:
                 picked, total = near
                 page = req.page
                 rows = [(h, dist) for dist, h in picked]
+                if window and not rows:
+                    return {"items": [], "total": 0, "page": 1,
+                            "note": f"No hotels {TIER_NAMES[req.budget_tier]} per room per night near {center['label']} for these dates. Try another budget."}
+            elif window:
+                count = n_hi - n_lo
+                page = max(1, min(req.page, math.ceil(count / PAGE_SIZE)))
+                start = n_lo + (page - 1) * PAGE_SIZE
+                first_api = start // PAGE_SIZE + 1
+                skip_in = start - (first_api - 1) * PAGE_SIZE
+                got: List[Dict[str, Any]] = []
+                for pg in ([first_api] if skip_in == 0 else [first_api, first_api + 1]):
+                    d = await fetch(pg, PAGE_SIZE, window[1])
+                    got.extend((d or {}).get("items") or [])
+                chosen = []
+                for h in got[skip_in:]:
+                    try:
+                        price = float((h.get("price") or {}).get("totalPrice") or 0)
+                    except (TypeError, ValueError):
+                        price = 0.0
+                    if price >= window[0] and (window[1] is None or price <= window[1]):
+                        chosen.append(h)
+                    if len(chosen) >= PAGE_SIZE:
+                        break
+                if not chosen:
+                    return None
+                total = count
+                rows = [(h, None) for h in chosen]
             else:
                 pages = max(1, math.ceil(total / PAGE_SIZE))
-                base = 1
-                if req.budget is None and req.budget_tier in TIER_PCT:
-                    base = max(1, min(pages, int(pages * TIER_PCT[req.budget_tier])))
-                page = min(pages, base + req.page - 1)
+                page = min(pages, req.page)
                 if page != 1:
                     d2 = await fetch(page)
                     if d2 and d2.get("items"):
@@ -671,10 +759,6 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 rows = [(h, None) for h in (data.get("items") or [])[:PAGE_SIZE]]
 
         out = [_hotel_card(h, req.destination, dist, center["label"] if (center and dist is not None) else None) for h, dist in rows]
-        try:
-            nights = max(1, (date.fromisoformat(req.end_date) - date.fromisoformat(req.start_date)).days)
-        except ValueError:
-            nights = 1
         for card in out:  # the hotel page needs these to load live photos, rooms and prices (patch_live)
             card["search_id"] = sid
             card["hotel_id"] = str(card["id"])[3:]
@@ -892,7 +976,7 @@ async def travel_search(req: SearchRequest, request: Request):
         mem = _LAST_SEARCH.get(f"{ip}|{req.destination.strip().lower()}|{req.start_date}")
         if mem and time.time() - mem["ts"] < 300:
             if req.budget_tier is None and req.budget is None:
-                if mem.get("budget_tier") in TIER_PCT:
+                if mem.get("budget_tier") in TIER_BANDS:
                     req.budget_tier = mem["budget_tier"]
                 b = mem.get("budget")
                 if isinstance(b, (int, float)) and 0 < b <= 10_000_000:
@@ -919,12 +1003,14 @@ async def travel_search(req: SearchRequest, request: Request):
     mode = "DEMO"
     total: Optional[int] = None
     page: Optional[int] = None
+    live_note: Optional[str] = None
     if req.service == "hotels":
         live = await _akbar_hotels(req)
         if live:
             results = live["items"]
             total = live["total"]
             page = live["page"]
+            live_note = live.get("note")
             mode = "LIVE"
     if not results and req.service != "hotels":
         results = _mock_results(req)
@@ -940,7 +1026,7 @@ async def travel_search(req: SearchRequest, request: Request):
         results.sort(key=lambda r: (-r.get("rating", 0), -r.get("review_count", 0)))   # guest rating first, then the more reviewed hotel
     note = None
     if req.service == "hotels" and not results:
-        note = (
+        note = live_note or (
             "Is budget me hotels nahi mile, budget badhakar try karein."
             if req.budget is not None
             else "Live hotels are not available right now. Please try again shortly."
@@ -1471,6 +1557,15 @@ async def _resolve_city(name: str) -> Optional[Dict[str, Any]]:
     return (exact or cities)[0]
 
 
+async def _locality_is_only_in(city: str, area: str) -> bool:
+    """True when `area` (a neighbourhood, landmark, station) is known to the supplier in `city` and in no other city:
+    then a visitor who named the area has named the city too. A locality that exists in several cities is not clear."""
+    results = await _akbar_destinations(area)
+    same = [d for d in results if d.get("type") in _AREA_KINDS and d.get("city")
+            and str(d.get("label") or "").strip().casefold() == area.strip().casefold()]
+    return bool(same) and all(_same_place(d["city"], city) for d in same)
+
+
 def _parse_day(value: Any) -> Optional[date]:
     try:
         return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
@@ -1583,9 +1678,12 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         dest = _clean(trip.get("destination"), 80)    # "make it cheaper": the model may leave the city out of a follow-up block
     if not dest:
         return None, "no_destination"
-    # the visitor must have named the city (the model must never invent one) - or it is the city of the current trip
+    # the visitor must have named the city (the model must never invent one) - or it is the city of the current trip -
+    # or a locality that only exists in that city ("Vaishali Nagar": the supplier's own list says which city it is in)
     if not _mentioned(dest, user_text) and not (trip and _same_place(dest, trip.get("destination"))):
-        return None, "city_not_mentioned"
+        area_named = _clean(raw.get("area"), 80) if service == "hotels" else ""
+        if not (area_named and _mentioned(area_named, user_text) and await _locality_is_only_in(dest, area_named)):
+            return None, "city_not_mentioned"
 
     gave_start, gave_end = raw.get("start_date") not in (None, ""), raw.get("end_date") not in (None, "")
     if trip:  # a follow-up: whatever the model left out stays as it was
@@ -1600,7 +1698,7 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         moved = _parse_day(raw.get("start_date")) if (gave_start and not gave_end) else None
         if moved and moved != _parse_day(trip.get("start_date")) and _stay_nights(trip):
             raw["end_date"] = (moved + timedelta(days=_stay_nights(trip))).isoformat()    # only the first day moved: the stay keeps its length
-        if raw.get("budget_tier") in (None, "") and raw.get("budget") in (None, ""):
+        if raw.get("budget_tier") in (None, "") and raw.get("budget") in (None, "") and raw.get("budget_per_night") in (None, ""):
             for key in ("budget_tier", "budget"):
                 if trip.get(key) is not None:
                     raw[key] = trip[key]
@@ -1652,7 +1750,7 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         label = str(city.get("label") or dest)
         block.update({"destination": label, "origin": label,
                       "destination_id": str(city.get("supplierLocationId") or city.get("id") or "")[:40]})
-        if raw.get("budget_tier") in TIER_PCT:
+        if raw.get("budget_tier") in TIER_BANDS:
             block["budget_tier"] = raw["budget_tier"]
         try:
             b = float(raw.get("budget"))
@@ -1660,6 +1758,15 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
                 block["budget"] = b
         except (TypeError, ValueError):
             pass
+        if "budget" not in block and raw.get("budget_per_night") not in (None, ""):
+            # "800" or "2000 per night": a price per room per night. The search works with the price of the whole stay.
+            try:
+                per_night = float(raw.get("budget_per_night"))
+                if 0 < per_night <= 1_000_000:
+                    block["budget"] = round(per_night * (end - start).days * max(1, min(int(block.get("rooms") or 1), travellers)))
+                    block.pop("budget_tier", None)
+            except (TypeError, ValueError, OverflowError):
+                pass
         area_in = _clean(raw.get("area"), 80)
         if area_in:
             found_area = await _resolve_area(label, area_in)
@@ -1796,9 +1903,11 @@ SYSTEM_PROMPT = (
     "4. Do NOT dump prices, itineraries, or options unprompted.\n"
     "5. You cannot book or confirm anything in chat. Never write a booking reference number.\n"
     "6. Never invent hotel names or prices. Real results are shown by the UI cards only.\n"
-    "7. HOTEL BUDGET: after travellers are known, ask ONE short question offering three choices in the user's language: "
-    "low/budget (sasta), medium (madhyam), or high/premium. Map the answer to budget_tier = low | medium | high. "
-    "If the user instead states a maximum price in rupees for the whole stay, put it in the block as a number called budget and omit budget_tier.\n"
+    "7. HOTEL BUDGET: after travellers are known, ask ONE short question offering three choices WITH their prices, in the user's language: "
+    "low/budget (sasta) = under Rs 1500, medium (madhyam) = Rs 1500 to 3000, high/premium = over Rs 3000, all per room per night. "
+    "Map the answer to budget_tier = low | medium | high. "
+    "If the user instead states a price in rupees, it is a price per room per night unless they say it is for the whole stay: "
+    "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier.\n"
     "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
     "If it does not (a date when you asked for a place, a place when you asked for a number, a number when you asked for a date, or something unclear), say so in ONE short line "
     "('That looks like a date, not a place.') and ask the SAME question again. A date, a time or a number is never a place name.\n"
@@ -2096,6 +2205,8 @@ async def chat_stream(req: ChatRequest, request: Request):
         named = " ".join(history_users + [user_text])
 
         reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
+        if block is None and cmem.offers_tiers(reply) and not cmem.states_ranges(reply):
+            reply = f"{reply} {cmem.fixed('budget_ranges', lang)}"      # the choices always come with their prices
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"
