@@ -179,7 +179,7 @@ def _remember_search(ip: str, blk: Dict[str, Any]) -> None:
     if len(_LAST_SEARCH) > 5000:
         _LAST_SEARCH.clear()
     key = f"{ip}|{str(blk.get('destination', '')).strip().lower()}|{blk.get('start_date', '')}"
-    _LAST_SEARCH[key] = {"budget_tier": blk.get("budget_tier"), "budget": blk.get("budget"), "area": blk.get("area"),
+    _LAST_SEARCH[key] = {"budget_tier": blk.get("budget_tier"), "budget": blk.get("budget"), "budget_min": blk.get("budget_min"), "area": blk.get("area"),
                          "destination_id": blk.get("destination_id"), "ts": time.time()}
 
 
@@ -207,6 +207,7 @@ class SearchRequest(BaseModel):
     children: int = Field(0, ge=0, le=6)        # hotels only
     child_ages: List[int] = Field(default_factory=list, max_length=6)   # hotels only: one age (0-17) per child
     budget: Optional[float] = Field(None, gt=0, le=10_000_000)  # max total price in INR
+    budget_min: Optional[float] = Field(None, gt=0, le=10_000_000)  # lowest total price in INR (a range "5000 to 9000 a night")
     budget_tier: Optional[Literal["low", "medium", "high"]] = None
     area: Optional[str] = Field(None, max_length=80)  # neighbourhood / landmark / station inside the city
     lang: Optional[Literal["en", "hinglish", "hi"]] = None   # the language of the chat, for the notes written here
@@ -676,8 +677,8 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 nights = 1
             rooms = max(1, min(req.rooms, req.travellers))
             window: Optional[Tuple[float, Optional[float]]] = None
-            if req.budget:
-                window = (0.0, float(req.budget))
+            if req.budget or req.budget_min:
+                window = (float(req.budget_min or 0), float(req.budget) if req.budget else None)
             elif req.budget_tier in TIER_BANDS:
                 window = _tier_window(req.budget_tier, nights, rooms)
             lo = window[0] if window else None
@@ -756,8 +757,9 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             card["guests"] = req.travellers + req.children
         note = None
         if widened:
-            per_night = round(hi / (nights * rooms)) if (req.budget and hi) else 0
-            note = (cmem.fixed("widened_amount", req.lang or "en").format(amount=f"{per_night:,}") if per_night
+            per = lambda v: f"{round(v / (nights * rooms)):,}"   # noqa: E731
+            amount = (f"{per(lo)}-{per(hi)}" if (lo and hi) else per(hi) if hi else per(lo) if lo else "") if (req.budget or req.budget_min) else ""
+            note = (cmem.fixed("widened_amount", req.lang or "en").format(amount=amount) if amount
                     else cmem.fixed("widened_tier_down" if req.budget_tier == "high" else "widened_tier", req.lang or "en"))
         return {"items": out, "total": total, "page": page, "note": note, "widened": widened}
     except Exception as exc:
@@ -968,12 +970,15 @@ async def travel_search(req: SearchRequest, request: Request):
     if req.service == "hotels":
         mem = _LAST_SEARCH.get(f"{ip}|{req.destination.strip().lower()}|{req.start_date}")
         if mem and time.time() - mem["ts"] < 300:
-            if req.budget_tier is None and req.budget is None:
+            if req.budget_tier is None and req.budget is None and req.budget_min is None:
                 if mem.get("budget_tier") in TIER_BANDS:
                     req.budget_tier = mem["budget_tier"]
                 b = mem.get("budget")
                 if isinstance(b, (int, float)) and 0 < b <= 10_000_000:
                     req.budget = float(b)
+                b = mem.get("budget_min")
+                if isinstance(b, (int, float)) and 0 < b <= 10_000_000:
+                    req.budget_min = float(b)
             if not req.destination_id and mem.get("destination_id"):
                 req.destination_id = str(mem["destination_id"])[:40]
             if not req.area and mem.get("area"):
@@ -1547,6 +1552,55 @@ async def _resolve_city(name: str) -> Optional[Dict[str, Any]]:
     return (exact or cities)[0]
 
 
+def _amounts(value: Any) -> Tuple[Optional[float], Optional[float]]:
+    """A rupee amount, or a range written as one string: 5000 -> (5000, None); "5000-9000", "5k to 9k" -> (5000, 9000)."""
+    if value in (None, ""):
+        return None, None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (float(value), None) if value > 0 else (None, None)
+    nums = []
+    for m in re.finditer(r"(\d[\d,]*(?:\.\d+)?)\s*(k|hazar|hazaar|thousand)?", str(value), re.I):
+        try:
+            n = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        nums.append(n * 1000 if m.group(2) else n)
+    nums = [n for n in nums if n > 0][:2]
+    if not nums:
+        return None, None
+    return (nums[0], nums[1]) if len(nums) == 2 else (nums[0], None)
+
+
+_TEXT_RANGE = re.compile(r"(?<![\d-])(\d[\d,]*(?:\s*k)?)\s*(?:-|–|to|se|and|aur)\s*(\d[\d,]*(?:\s*k)?)(?![\d-])(?!\s*(?:nights?|raat|din|days?|log|people|guests?|adults?))", re.I)
+
+
+def _range_in_text(user_text: str) -> Optional[Tuple[float, float]]:
+    """A price range the visitor typed ("budget 5000 - 9000", "5k to 9k"), per night. None for dates, nights or guests."""
+    m = _TEXT_RANGE.search(str(user_text or ""))
+    if not m:
+        return None
+    a, b = _amounts(m.group(1))[0], _amounts(m.group(2))[0]
+    if not a or not b or min(a, b) < 300 or max(a, b) > 1_000_000:
+        return None
+    return (min(a, b), max(a, b))
+
+
+def _apply_text_range(reply: str, block: Optional[Dict[str, Any]], user_text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The visitor typed a price range but the model left it out of the hotel search: put it in (per room per night)."""
+    if not block or block.get("service") != "hotels" or block.get("budget") or block.get("budget_min"):
+        return reply, block
+    rng = _range_in_text(user_text)
+    if not rng:
+        return reply, block
+    start, end = _parse_day(block.get("start_date")), _parse_day(block.get("end_date"))
+    nights = max(1, (end - start).days) if (start and end and end > start) else 1
+    k = nights * max(1, min(int(block.get("rooms") or 1), int(block.get("travellers") or 1)))
+    block = {**{x: v for x, v in block.items() if x != "budget_tier"}, "budget_min": round(rng[0] * k), "budget": round(rng[1] * k)}
+    m = re.search(r"<search>.*?</search>", reply, re.S)
+    tag = f"<search>{json.dumps(block, ensure_ascii=False)}</search>"
+    return (reply[:m.start()] + tag + reply[m.end():] if m else f"{reply}\n{tag}"), block
+
+
 def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], str]]:
     """The visitor said yes after a hotel search that found nothing, or only the prices closest to the budget (the note asked
     "shall I look a little higher?"): the next search, and the line that goes with it. None when there is nothing to step."""
@@ -1558,16 +1612,17 @@ def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any
         return None
     step = dict(trip)
     tier = trip.get("budget_tier")
-    if trip.get("budget"):
+    if trip.get("budget") or trip.get("budget_min"):
         start, end = _parse_day(trip.get("start_date")), _parse_day(trip.get("end_date"))
         nights = max(1, (end - start).days) if (start and end and end > start) else 1
         rooms = max(1, min(int(trip.get("rooms") or 1), int(trip.get("travellers") or 1)))
-        per_night = float(trip["budget"]) / (nights * rooms)
+        per_night = float(trip.get("budget") or trip["budget_min"]) / (nights * rooms)
         # the closest prices just shown are the bottom of the tier the amount falls in: "a little higher" is the tier after it
         tiers = ("low", "medium", "high")
         inside = next(i for i, t in enumerate(tiers) if TIER_BANDS[t][1] is None or per_night < TIER_BANDS[t][1])
         nxt = tiers[min(inside + 1, len(tiers) - 1)]
         step.pop("budget", None)
+        step.pop("budget_min", None)
         step["budget_tier"] = nxt
         return step, "budget_up"
     if tier == "high":
@@ -1718,8 +1773,8 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         moved = _parse_day(raw.get("start_date")) if (gave_start and not gave_end) else None
         if moved and moved != _parse_day(trip.get("start_date")) and _stay_nights(trip):
             raw["end_date"] = (moved + timedelta(days=_stay_nights(trip))).isoformat()    # only the first day moved: the stay keeps its length
-        if raw.get("budget_tier") in (None, "") and raw.get("budget") in (None, "") and raw.get("budget_per_night") in (None, ""):
-            for key in ("budget_tier", "budget"):
+        if all(raw.get(k) in (None, "") for k in ("budget_tier", "budget", "budget_per_night", "budget_min", "budget_min_per_night")):
+            for key in ("budget_tier", "budget", "budget_min"):
                 if trip.get(key) is not None:
                     raw[key] = trip[key]
         if service != "hotels" and not _clean(raw.get("origin"), 80) and trip.get("origin"):
@@ -1772,21 +1827,21 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
                       "destination_id": str(city.get("supplierLocationId") or city.get("id") or "")[:40]})
         if raw.get("budget_tier") in TIER_BANDS:
             block["budget_tier"] = raw["budget_tier"]
-        try:
-            b = float(raw.get("budget"))
-            if 0 < b <= 10_000_000:
-                block["budget"] = b
-        except (TypeError, ValueError):
-            pass
-        if "budget" not in block and raw.get("budget_per_night") not in (None, ""):
-            # "800" or "2000 per night": a price per room per night. The search works with the price of the whole stay.
-            try:
-                per_night = float(raw.get("budget_per_night"))
-                if 0 < per_night <= 1_000_000:
-                    block["budget"] = round(per_night * (end - start).days * max(1, min(int(block.get("rooms") or 1), travellers)))
-                    block.pop("budget_tier", None)
-            except (TypeError, ValueError, OverflowError):
-                pass
+        # amounts: "budget" / "budget_min" for the whole stay, "budget_per_night" / "budget_min_per_night" per room per night.
+        # The model may also write a range as one string ("5000-9000"). The search works with prices of the whole stay.
+        k = (end - start).days * max(1, min(int(block.get("rooms") or 1), travellers))
+        lo_s, hi_s = _amounts(raw.get("budget_min")), _amounts(raw.get("budget"))
+        lo_n, hi_n = _amounts(raw.get("budget_min_per_night")), _amounts(raw.get("budget_per_night"))
+        lo = lo_s[0] or (lo_n[0] * k if lo_n[0] else None) or (hi_s[0] if hi_s[1] else None) or (hi_n[0] * k if hi_n[1] else None)
+        hi = (hi_s[1] or hi_s[0]) or ((hi_n[1] or hi_n[0]) * k if (hi_n[1] or hi_n[0]) else None)
+        if lo and hi and lo > hi:
+            lo, hi = hi, lo
+        if hi and 0 < hi <= 10_000_000:
+            block["budget"] = round(hi)
+        if lo and 0 < lo <= 10_000_000 and (not hi or lo < hi):
+            block["budget_min"] = round(lo)
+        if "budget" in block or "budget_min" in block:
+            block.pop("budget_tier", None)
         area_in = _clean(raw.get("area"), 80)
         if area_in:
             found_area = await _resolve_area(label, area_in)
@@ -1927,7 +1982,9 @@ SYSTEM_PROMPT = (
     "NEVER mention a price, a rupee amount or a price limit for these choices, and never explain what they cost: the app decides that. "
     "If asked, say sasta means the lowest prices, madhyam the middle and premium the top hotels. Map the answer to budget_tier = low | medium | high. "
     "If the user instead states a price in rupees, it is a price per room per night unless they say it is for the whole stay: "
-    "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier.\n"
+    "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier. "
+    "A RANGE ('5000 se 9000', '5k-9k', 'between 2000 and 4000') is two numbers: budget_min_per_night (the lower one) and budget_per_night (the upper one); "
+    "'above 3000' / '3000 se upar' is only budget_min_per_night. Never search a range without these numbers.\n"
     "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
     "If it does not (a date when you asked for a place, a place when you asked for a number, a number when you asked for a date, or something unclear), say so in ONE short line "
     "('That looks like a date, not a place.') and ask the SAME question again. A date, a time or a number is never a place name.\n"
@@ -2239,6 +2296,7 @@ async def chat_stream(req: ChatRequest, request: Request):
 
         reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
         reply = cmem.hide_tier_prices(reply, lang)      # the price limits of sasta / madhyam / premium are never shown
+        reply, block = _apply_text_range(reply, block, user_text)
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"

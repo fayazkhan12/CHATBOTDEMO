@@ -149,7 +149,7 @@ export function extractSearchIntent(text) {
   }
 }
 
-const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "area", "pickup", "drop", "vehicle", "when", "items"];
+const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "budget_min", "area", "pickup", "drop", "vehicle", "when", "items"];
 const plainIntent = (intent) => Object.fromEntries(KEEP_KEYS.filter((k) => intent[k] !== undefined && intent[k] !== null && intent[k] !== "").map((k) => [k, intent[k]]));
 
 function historyForServer(messages) {
@@ -270,6 +270,7 @@ export async function runSearch(intent, replyId) {
         ? { children: Number(intent.children), child_ages: intent.child_ages.map(Number) } : {}),
       ...(intent.budget_tier ? { budget_tier: intent.budget_tier } : {}),
       ...(intent.budget ? { budget: Number(intent.budget) } : {}),
+      ...(intent.budget_min ? { budget_min: Number(intent.budget_min) } : {}),
       ...(intent.area ? { area: intent.area } : {}),
       lang,                                      // the notes the server writes come in the chat's language
     };

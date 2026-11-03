@@ -106,12 +106,13 @@ def clean_search(raw: Any) -> Optional[Dict[str, Any]]:
             out.update(occ)
     if raw.get("budget_tier") in TIERS:
         out["budget_tier"] = raw["budget_tier"]
-    try:
-        b = float(raw.get("budget"))
-        if 0 < b <= 10_000_000:
-            out["budget"] = b
-    except (TypeError, ValueError):
-        pass
+    for key in ("budget", "budget_min"):
+        try:
+            b = float(raw.get(key))
+            if 0 < b <= 10_000_000:
+                out[key] = b
+        except (TypeError, ValueError):
+            pass
     if raw.get("vehicle") in VEHICLES:
         out["vehicle"] = raw["vehicle"]
     when = str(raw.get("when") or "").strip()
@@ -280,8 +281,12 @@ def describe_trip(trip: Dict[str, Any]) -> str:
         bits.append(f"{trip['rooms']} rooms")
     if trip.get("budget_tier"):
         bits.append(f"budget tier {trip['budget_tier']}")
+    elif trip.get("budget") and trip.get("budget_min"):
+        bits.append(f"budget Rs {int(trip['budget_min'])} to Rs {int(trip['budget'])} for the whole stay")
     elif trip.get("budget"):
-        bits.append(f"maximum budget Rs {int(trip['budget'])}")
+        bits.append(f"maximum budget Rs {int(trip['budget'])} for the whole stay")
+    elif trip.get("budget_min"):
+        bits.append(f"budget from Rs {int(trip['budget_min'])} for the whole stay")
     return ", ".join(bits)
 
 
@@ -510,6 +515,7 @@ def quick_edit(trip: Optional[Dict[str, Any]], user_text: str) -> Optional[Dict[
         if tier and tier != trip.get("budget_tier"):
             edited["budget_tier"] = tier
             edited.pop("budget", None)
+            edited.pop("budget_min", None)
             changed = True
     m = _GUESTS.search(t)
     if m:
