@@ -154,6 +154,9 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onR
       )}
       {msg.grocery && <GroceryChat grocery={msg.grocery} onOpen={onOpenGrocery} />}
       {msg.ride && <RideQuote ride={msg.ride} onOpen={(vehicle) => onOpenRide(msg.ride, vehicle)} />}
+      {msg.cards?.length > 0 && msg.note && (
+        <div className="chat-status" data-testid="chat-search-note"><small>{msg.note}</small></div>
+      )}
       {msg.cards?.length > 0 && (
         <div className="inline-cards">
           {msg.cards.slice(0, msg.visible || 3).map(card => (

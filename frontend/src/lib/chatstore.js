@@ -180,8 +180,12 @@ export function visibleCards(messages = state.messages) {
 }
 
 function resultsForServer(messages) {
-  const last = [...messages].reverse().find((m) => (m.cards && m.cards.length) || m.ride);
+  const last = [...messages].reverse().find((m) => (m.cards && m.cards.length) || m.ride || m.noResults);
   if (!last) return null;
+  if (last.noResults && !(last.cards && last.cards.length)) {
+    // the last search found nothing: the model must know, or a "yes" to "try a bigger budget?" makes no sense to it
+    return { service: last.search?.service || last.searchService || "hotels", total: 0, shown: 0, items: [], note: last.note || "nothing found" };
+  }
   if (last.ride && last.ride.options) {
     const items = last.ride.options.filter((o) => o.available).slice(0, 8).map((o) => ({
       title: o.name, price: o.fare, extra: `${o.eta_min} min away`, meta: [`${last.ride.distance_km} km`, `${last.ride.duration_min} min trip`],
@@ -190,7 +194,10 @@ function resultsForServer(messages) {
   }
   const shown = last.cards.slice(0, last.visible || 3);
   const service = last.search?.service || (shown[0]?.type === "hotel" ? "hotels" : shown[0]?.type === "flight" ? "flights" : shown[0]?.type === "bus" ? "buses" : "hotels");
-  return { service, total: last.total || last.cards.length, shown: shown.length, ...(last.search?.area ? { area: last.search.area } : {}), items: shown.map(digestOf) };
+  return {
+    service, total: last.total || last.cards.length, shown: shown.length, ...(last.search?.area ? { area: last.search.area } : {}),
+    ...(last.widened ? { widened: true, note: last.note || "" } : {}), items: shown.map(digestOf),
+  };
 }
 
 // ------------------------------------------------------------------ the hotel the visitor opened or booked
@@ -248,7 +255,7 @@ export async function runSearch(intent, replyId) {
   const lang = chatLang(state.messages.find((m) => m.id === replyId)?.text);
   if (intent.service === "rides") return runRideQuote(intent, replyId, lang);
   if (intent.service === "grocery") return runGrocery(intent, replyId, lang);
-  patchMessage(replyId, { searching: intent.service, noResults: false, interrupted: undefined, lang });
+  patchMessage(replyId, { searching: intent.service, noResults: false, note: "", widened: false, interrupted: undefined, lang });
   try {
     const body = {
       service: intent.service,
@@ -264,6 +271,7 @@ export async function runSearch(intent, replyId) {
       ...(intent.budget_tier ? { budget_tier: intent.budget_tier } : {}),
       ...(intent.budget ? { budget: Number(intent.budget) } : {}),
       ...(intent.area ? { area: intent.area } : {}),
+      lang,                                      // the notes the server writes come in the chat's language
     };
     const { data } = await http.post("/travel/search", body);
     await http.post("/travel/cache", data.results).catch(() => {});
@@ -271,7 +279,7 @@ export async function runSearch(intent, replyId) {
     patchMessage(replyId, {
       searching: false, cards: found, cardsDropped: false, visible: 3, total: data.total || 0,
       page: data.page || 1, hasMore: !!data.has_more, searchBody: body,
-      noResults: found.length === 0, note: found.length === 0 ? (data.note || "") : "", lang,
+      noResults: found.length === 0, note: data.note || "", widened: !!data.widened, searchService: intent.service, lang,
     });
   } catch {
     setMessages((prev) => [

@@ -100,7 +100,6 @@ PAGE_SIZE = 12
 # The three budget choices are fixed prices in rupees PER ROOM PER NIGHT: low (sasta) = under 1500, medium (madhyam) = 1500 to 3000,
 # high (premium) = over 3000. (lowest, highest) of the price window; None = no upper limit.
 TIER_BANDS = {"low": (0, 1500), "medium": (1500, 3000), "high": (3000, None)}
-TIER_NAMES = {"low": "under ₹1,500", "medium": "₹1,500 to ₹3,000", "high": "over ₹3,000"}
 
 
 def _tier_window(tier: Optional[str], nights: int, rooms: int) -> Optional[Tuple[float, Optional[float]]]:
@@ -210,6 +209,7 @@ class SearchRequest(BaseModel):
     budget: Optional[float] = Field(None, gt=0, le=10_000_000)  # max total price in INR
     budget_tier: Optional[Literal["low", "medium", "high"]] = None
     area: Optional[str] = Field(None, max_length=80)  # neighbourhood / landmark / station inside the city
+    lang: Optional[Literal["en", "hinglish", "hi"]] = None   # the language of the chat, for the notes written here
     page: int = Field(1, ge=1, le=50)
     sort: Literal["recommended", "price", "duration", "rating"] = "recommended"
     nationality: str = Field("IN", min_length=2, max_length=2)
@@ -464,28 +464,32 @@ async def _resolve_area(city: str, area: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _total_price(h: Dict[str, Any]) -> float:
+    try:
+        return float((h.get("price") or {}).get("totalPrice") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRequest",
-                       window: Optional[Tuple[float, Optional[float]]] = None, skip: int = 0) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
+                       closest=None) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
     """Scan the results, keep the hotels closest to the area, then page through them cheapest first.
-    `window`: the price window of the budget tier (only hotels inside it are kept); `total`: how many results `fetch` can give
-    (those under the top of the window) and `skip`: how many of them are cheaper than the window (the scan starts after them)."""
+    `closest(hotel) -> number`: order the nearby hotels by it instead (used to show the prices nearest to a budget)."""
     limit = AREA_PAGE_LIMIT
-    first_page = skip // limit + 1
-    first = await fetch(first_page, limit)
+    first = await fetch(1, limit)
     if not first:                      # the supplier refuses big pages: use the normal size
         limit = PAGE_SIZE
-        first_page = skip // limit + 1
-        first = await fetch(first_page, limit)
+        first = await fetch(1, limit)
     if not first or not first.get("items"):
         return None
-    last_page = max(first_page, min(first_page + AREA_MAX_PAGES - 1, math.ceil(total / limit)))
+    pages = max(1, min(AREA_MAX_PAGES, math.ceil(total / limit)))
     sem = asyncio.Semaphore(5)
 
     async def one(page: int):
         async with sem:
             return await fetch(page, limit)
 
-    rest = await asyncio.gather(*(one(pg) for pg in range(first_page + 1, last_page + 1))) if last_page > first_page else []
+    rest = await asyncio.gather(*(one(pg) for pg in range(2, pages + 1))) if pages > 1 else []
     seen: set = set()
     scored: List[Tuple[float, Dict[str, Any]]] = []
     for chunk in [first, *rest]:
@@ -494,13 +498,6 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
             g = h.get("geoCode") or {}
             if hid in seen:
                 continue
-            if window:
-                try:
-                    price = float((h.get("price") or {}).get("totalPrice") or 0)
-                except (TypeError, ValueError):
-                    price = 0.0
-                if price <= 0 or price < window[0] or (window[1] is not None and price > window[1]):
-                    continue
             try:
                 dist = _km(center["lat"], center["long"], float(g["lat"]), float(g["long"]))
             except (KeyError, TypeError, ValueError):
@@ -508,13 +505,13 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
             seen.add(hid)
             scored.append((dist, h))
     if not scored:
-        return ([], 0) if window else None
+        return None
     scored.sort(key=lambda x: x[0])
     pool = [x for x in scored if x[0] <= AREA_RADIUS_KM]
     if len(pool) < PAGE_SIZE:          # nothing really close: show the nearest ones instead of nothing
         pool = scored[:PAGE_SIZE]
     pool = pool[:AREA_POOL]
-    pool.sort(key=lambda x: float((x[1].get("price") or {}).get("totalPrice") or 0))
+    pool.sort(key=(lambda x: (closest(x[1]), _total_price(x[1]))) if closest else (lambda x: _total_price(x[1])))
     start = min((req.page - 1) * PAGE_SIZE, max(0, len(pool) - 1))
     return pool[start:start + PAGE_SIZE], len(pool)
 
@@ -640,11 +637,14 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 logger.warning("No searchId in response")
                 return None
 
-            async def fetch(page: int, limit: int = PAGE_SIZE, max_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
-                params: Dict[str, Any] = {"page": page, "limit": limit, "sortBy": "price", "sortOrder": "asc"}
-                cap = max_price if max_price is not None else req.budget
-                if cap:
-                    params["maxPrice"] = cap
+            async def fetch(page: int, limit: int = PAGE_SIZE, lo: Optional[float] = None, hi: Optional[float] = None,
+                            order: str = "asc") -> Optional[Dict[str, Any]]:
+                """One page of the results, cheapest first (or dearest first). lo / hi: the supplier filters by the total price."""
+                params: Dict[str, Any] = {"page": page, "limit": limit, "sortBy": "price", "sortOrder": order}
+                if lo:
+                    params["minPrice"] = round(lo, 2)
+                if hi:
+                    params["maxPrice"] = round(hi, 2)
                 rr = await c.get(f"{HOTEL_API_BASE}/search/{sid}", params=params)
                 if rr.status_code != 200:
                     return None
@@ -668,85 +668,73 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             total = int((data.get("pagination") or {}).get("total") or len(data["items"]))
             city_label = str((pick or {}).get("label") or req.destination)
 
-            # a budget tier is a fixed price window (per room per night): the results are sorted by price, so the window is the slice
-            # between "how many cost up to its bottom" and "how many cost up to its top" (the supplier counts them for us)
+            # The budget is a price window on the supplier's total price (every room, every night). A tier is a fixed price per room per
+            # night (TIER_BANDS, never shown to the visitor); an amount the visitor named is a ceiling. The supplier filters by price itself.
             try:
                 nights = max(1, (date.fromisoformat(req.end_date) - date.fromisoformat(req.start_date)).days)
             except ValueError:
                 nights = 1
-            window = _tier_window(req.budget_tier, nights, min(req.rooms, req.travellers)) if req.budget is None else None
-            n_lo, n_hi = 0, total
-            if window:
-                async def count_under(cap: Optional[float]) -> Optional[int]:
-                    """How many hotels cost up to `cap` (all of them when None); None when the supplier did not say."""
-                    for _ in range(2):
-                        d = await fetch(1, PAGE_SIZE, cap)
-                        if d is None:                   # the supplier answered with an error: try once more
-                            continue
-                        pag = d.get("pagination")
-                        if isinstance(pag, dict) and pag.get("total") is not None:
-                            try:
-                                return max(0, int(pag["total"]))
-                            except (TypeError, ValueError):
-                                return None
-                        return 0 if not d.get("items") else None
-                    return None
+            rooms = max(1, min(req.rooms, req.travellers))
+            window: Optional[Tuple[float, Optional[float]]] = None
+            if req.budget:
+                window = (0.0, float(req.budget))
+            elif req.budget_tier in TIER_BANDS:
+                window = _tier_window(req.budget_tier, nights, rooms)
+            lo = window[0] if window else None
+            hi = window[1] if window else None
+            widened = False
 
-                n_hi = await count_under(window[1])
-                if window[0] > 0 and n_hi:
-                    n_lo = await count_under(window[0] - 1)
-                if n_hi is None or n_lo is None:
-                    logger.warning("Hotel price window could not be counted (tier=%s)", req.budget_tier)
-                    return None
-                n_lo = min(n_lo, n_hi)
-                if n_hi - n_lo <= 0:
-                    return {"items": [], "total": 0, "page": 1,
-                            "note": f"No hotels {TIER_NAMES[req.budget_tier]} per room per night here for these dates. Try another budget."}
+            def gap(h: Dict[str, Any]) -> float:
+                """How far a hotel's price is outside the window (0 inside it)."""
+                price = _total_price(h)
+                if lo and price < lo:
+                    return lo - price
+                if hi and price > hi:
+                    return price - hi
+                return 0.0
 
             near = None
             center = await _resolve_area(city_label, req.area) if req.area else None
             if center:
                 if window:
-                    cap_hi = window[1]
-
                     async def fetch_window(page: int, limit: int = PAGE_SIZE) -> Optional[Dict[str, Any]]:
-                        return await fetch(page, limit, cap_hi)
+                        return await fetch(page, limit, lo, hi)
 
-                    near = await _hotels_near(fetch_window, n_hi, center, req, window, n_lo)
+                    first = await fetch(1, PAGE_SIZE, lo, hi)
+                    in_window = int(((first or {}).get("pagination") or {}).get("total") or 0)
+                    near = await _hotels_near(fetch_window, in_window, center, req) if in_window else None
+                    if not near or not near[0]:
+                        # nothing near the area at this price: the nearby hotels whose price is closest to it
+                        near = await _hotels_near(fetch, total, center, req, closest=gap)
+                        widened = bool(near and near[0])
                 else:
                     near = await _hotels_near(fetch, total, center, req)
 
-            if near:
+            if near and near[0]:
                 picked, total = near
                 page = req.page
                 rows = [(h, dist) for dist, h in picked]
-                if window and not rows:
-                    return {"items": [], "total": 0, "page": 1,
-                            "note": f"No hotels {TIER_NAMES[req.budget_tier]} per room per night near {center['label']} for these dates. Try another budget."}
             elif window:
-                count = n_hi - n_lo
-                page = max(1, min(req.page, math.ceil(count / PAGE_SIZE)))
-                start = n_lo + (page - 1) * PAGE_SIZE
-                first_api = start // PAGE_SIZE + 1
-                skip_in = start - (first_api - 1) * PAGE_SIZE
-                got: List[Dict[str, Any]] = []
-                for pg in ([first_api] if skip_in == 0 else [first_api, first_api + 1]):
-                    d = await fetch(pg, PAGE_SIZE, window[1])
-                    got.extend((d or {}).get("items") or [])
-                chosen = []
-                for h in got[skip_in:]:
-                    try:
-                        price = float((h.get("price") or {}).get("totalPrice") or 0)
-                    except (TypeError, ValueError):
-                        price = 0.0
-                    if price >= window[0] and (window[1] is None or price <= window[1]):
-                        chosen.append(h)
-                    if len(chosen) >= PAGE_SIZE:
-                        break
-                if not chosen:
+                d = await fetch(1, PAGE_SIZE, lo, hi)
+                count = int(((d or {}).get("pagination") or {}).get("total") or 0) if d else 0
+                if count:
+                    page = max(1, min(req.page, math.ceil(count / PAGE_SIZE)))
+                    if page != 1:
+                        d = await fetch(page, PAGE_SIZE, lo, hi) or d
+                    items = [h for h in (d.get("items") or []) if gap(h) == 0] or (d.get("items") or [])
+                    total = count
+                else:
+                    # nothing at this price: the hotels whose price is closest to it (just above it, else just below it)
+                    widened = True
+                    page = req.page
+                    d = await fetch(page, PAGE_SIZE, hi or lo, None) if (hi or lo) else None
+                    if not (d and d.get("items")) and lo:
+                        d = await fetch(page, PAGE_SIZE, None, lo, "desc")
+                    items = (d or {}).get("items") or []
+                    total = int(((d or {}).get("pagination") or {}).get("total") or len(items))
+                if not items:
                     return None
-                total = count
-                rows = [(h, None) for h in chosen]
+                rows = [(h, None) for h in items[:PAGE_SIZE]]
             else:
                 pages = max(1, math.ceil(total / PAGE_SIZE))
                 page = min(pages, req.page)
@@ -766,7 +754,12 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             card["nights"] = nights
             card["adults"], card["children"], card["rooms"] = req.travellers, req.children, min(req.rooms, req.travellers)
             card["guests"] = req.travellers + req.children
-        return {"items": out, "total": total, "page": page}
+        note = None
+        if widened:
+            per_night = round(hi / (nights * rooms)) if (req.budget and hi) else 0
+            note = (cmem.fixed("widened_amount", req.lang or "en").format(amount=f"{per_night:,}") if per_night
+                    else cmem.fixed("widened_tier", req.lang or "en"))
+        return {"items": out, "total": total, "page": page, "note": note, "widened": widened}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
         return None
@@ -1004,6 +997,7 @@ async def travel_search(req: SearchRequest, request: Request):
     total: Optional[int] = None
     page: Optional[int] = None
     live_note: Optional[str] = None
+    live: Optional[Dict[str, Any]] = None
     if req.service == "hotels":
         live = await _akbar_hotels(req)
         if live:
@@ -1017,27 +1011,23 @@ async def travel_search(req: SearchRequest, request: Request):
         for r in results:  # the details and payment pages show these
             r["guests"] = req.travellers
             r["check_in"] = req.start_date
-    if req.budget is not None:
+    if req.budget is not None and req.service != "hotels":     # hotels: the supplier already filtered by price (or showed the closest)
         trimmed = [r for r in results if r["price"] <= req.budget]
-        results = trimmed if (trimmed or req.service == "hotels") else results
+        results = trimmed or results
     if req.sort == "price":
         results.sort(key=lambda r: r["price"])
     elif req.sort == "rating" and req.service == "hotels":
         results.sort(key=lambda r: (-r.get("rating", 0), -r.get("review_count", 0)))   # guest rating first, then the more reviewed hotel
-    note = None
+    note = live_note if req.service == "hotels" else None
     if req.service == "hotels" and not results:
-        note = live_note or (
-            "Is budget me hotels nahi mile, budget badhakar try karein."
-            if req.budget is not None
-            else "Live hotels are not available right now. Please try again shortly."
-        )
+        note = live_note or cmem.fixed("hotels_unavailable", req.lang or "en")
     for r in results:
         if isinstance(r.get("id"), str) and isinstance(r.get("price"), (int, float)) and r["price"] > 0:
             r["price_token"] = _price_token(r["id"], round(r["price"]))
     return {
         "status": "success", "mode": mode, "service": req.service,
         "results": results, "note": note, "area": req.area if req.service == "hotels" else None,
-        "total": total, "page": page, "budget_tier": req.budget_tier,
+        "total": total, "page": page, "budget_tier": req.budget_tier, "widened": bool(live and live.get("widened")),
         "has_more": bool(total and page and page * PAGE_SIZE < total),
         "searched_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1903,9 +1893,9 @@ SYSTEM_PROMPT = (
     "4. Do NOT dump prices, itineraries, or options unprompted.\n"
     "5. You cannot book or confirm anything in chat. Never write a booking reference number.\n"
     "6. Never invent hotel names or prices. Real results are shown by the UI cards only.\n"
-    "7. HOTEL BUDGET: after travellers are known, ask ONE short question offering three choices WITH their prices, in the user's language: "
-    "low/budget (sasta) = under Rs 1500, medium (madhyam) = Rs 1500 to 3000, high/premium = over Rs 3000, all per room per night. "
-    "Map the answer to budget_tier = low | medium | high. "
+    "7. HOTEL BUDGET: after travellers are known, ask ONE short question offering three choices in the user's language: sasta (low), madhyam (medium) or premium (high). "
+    "NEVER mention a price, a rupee amount or a price limit for these choices, and never explain what they cost: the app decides that. "
+    "If asked, say sasta means the lowest prices, madhyam the middle and premium the top hotels. Map the answer to budget_tier = low | medium | high. "
     "If the user instead states a price in rupees, it is a price per room per night unless they say it is for the whole stay: "
     "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier.\n"
     "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
@@ -2205,8 +2195,7 @@ async def chat_stream(req: ChatRequest, request: Request):
         named = " ".join(history_users + [user_text])
 
         reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
-        if block is None and cmem.offers_tiers(reply) and not cmem.states_ranges(reply):
-            reply = f"{reply} {cmem.fixed('budget_ranges', lang)}"      # the choices always come with their prices
+        reply = cmem.hide_tier_prices(reply, lang)      # the price limits of sasta / madhyam / premium are never shown
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"

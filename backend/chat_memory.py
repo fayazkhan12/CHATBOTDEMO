@@ -29,8 +29,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 SERVICES = ("hotels", "flights", "buses", "rides")      # "cabs" is the old name of "rides"
 TIERS = ("low", "medium", "high")
-# what each budget tier means: a fixed price per room per night (the same limits as TIER_BANDS in server.py)
-TIER_TEXT = {"low": "under Rs 1500 per room per night", "medium": "Rs 1500 to Rs 3000 per room per night", "high": "over Rs 3000 per room per night"}
 VEHICLES = ("bike", "auto", "cab", "any")
 
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -224,9 +222,14 @@ def clean_results(ctx: Any, max_items: int = 12) -> Optional[Dict[str, Any]]:
         if isinstance(it.get("meta"), list):
             row["meta"] = [text(m, 40) for m in it["meta"][:3] if text(m, 40)]
         items.append(row)
-    if not items:
+    note = text(raw.get("note"), 200)
+    if not items and not note and raw.get("total") != 0:
         return None
     out: Dict[str, Any] = {"service": service, "items": items}
+    if note:
+        out["note"] = note
+    if raw.get("widened"):
+        out["widened"] = True
     for key in ("total", "shown"):
         try:
             out[key] = max(0, min(100000, int(raw.get(key))))
@@ -276,7 +279,7 @@ def describe_trip(trip: Dict[str, Any]) -> str:
     if service == "hotels" and (trip.get("rooms") or 1) > 1:
         bits.append(f"{trip['rooms']} rooms")
     if trip.get("budget_tier"):
-        bits.append(f"budget tier {trip['budget_tier']} ({TIER_TEXT.get(trip['budget_tier'], '')})")
+        bits.append(f"budget tier {trip['budget_tier']}")
     elif trip.get("budget"):
         bits.append(f"maximum budget Rs {int(trip['budget'])}")
     return ", ".join(bits)
@@ -323,7 +326,11 @@ FOLLOW_UP_RULES = (
     "A new city -> new destination with the same dates, guests and budget, and NO area. If only the check-in date changes, keep the same number of nights.\n"
     "- A question about the results on screen (which is cheapest, best rated, closest, 'the second one') is answered from the numbered list above in one or two sentences, with NO new <search> block. "
     "Never name a result that is not in the list. For photos, rooms or exact prices tell the visitor to tap View on that card.\n"
-    "- Thanks, ok, hello and other small talk: answer in one short sentence, no <search> block, and do not repeat the old search.\n"
+    "- A short yes (yes, ok, haan, hn, theek hai, chalo) answers YOUR last question or offer: do what you offered, right away. "
+    "Never answer it with 'anything else for your trip?' or by starting over.\n"
+    "- When the last search found NOTHING, or only the closest prices to the budget, say so in one short line and offer ONE next step yourself "
+    "(the next budget up: low -> medium -> high, or the whole city instead of the area, or other dates). If the visitor agrees, search again at once with a complete <search> block.\n"
+    "- Thanks, hello and other small talk (or an ok when you had offered nothing): answer in one short sentence, no <search> block, and do not repeat the old search.\n"
     "- NEVER say you are showing, searching or fetching options unless the same reply ends with the <search> block."
 )
 
@@ -335,8 +342,12 @@ def memory_prompt(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, An
         parts.append("Current trip (the last search that ran): " + describe_trip(trip) + ".")
     if selection:
         parts.append("Hotel in focus: " + describe_selection(selection) + ".")
-    if results:
+    if results and not results["items"]:
+        parts.append(f"The last {results['service']} search found NOTHING. The visitor was told: \"{results.get('note') or 'nothing found'}\"")
+    elif results:
         parts.append(f"Results on the visitor's screen right now ({results['service']}), numbered as they see them:\n" + describe_results(results))
+        if results.get("widened"):
+            parts.append(f"Nothing matched the budget exactly, so these are the closest prices. The visitor was told: \"{results.get('note') or ''}\"")
     if not parts:
         return ""
     return "\n\nCONVERSATION MEMORY (kept by the app, trust it over your own guesses):\n" + "\n".join(parts) + "\n" + FOLLOW_UP_RULES
@@ -411,21 +422,40 @@ def has_budget_cue(user_message: str) -> bool:
 
 
 _TIER_WORDS = (
-    re.compile(r"\bsast[ao]a?\b|\bsasti\b|\bcheap\b|\blow\b|सस्ता", re.I),
+    re.compile(r"\bsast[ao]a?\b|\bsasti\b|\bcheap\b|\blow\b|\bbudget\b|सस्ता", re.I),
     re.compile(r"\bmadhyam\b|\bmedium\b|\bmid\b|मध्यम", re.I),
     re.compile(r"\bpremium\b|\bhigh\b|\bluxury\b|प्रीमियम", re.I),
 )
-_RANGE_GIVEN = re.compile(r"1[,.]?500")
+_PRICE = re.compile(r"₹|\brs\.?\s*\d|\brupe\w*|\d{3,}|\d\s*k\b|\d[\d,]*\s*(?:se|to|-|–)\s*\d|रुपय|\d{1,3},\d{3}", re.I)
 
 
-def offers_tiers(spoken: str) -> bool:
-    """The reply asks the visitor to pick between the budget choices (at least two of cheap / medium / premium)."""
-    return "?" in (spoken or "") and sum(1 for p in _TIER_WORDS if p.search(spoken)) >= 2
-
-
-def states_ranges(spoken: str) -> bool:
-    """The reply already says what the budget choices cost (the 1500 limit is in it)."""
-    return bool(_RANGE_GIVEN.search(spoken or ""))
+def hide_tier_prices(reply: str, lang: str) -> str:
+    """The price limits of sasta / madhyam / premium are the app's own business. A sentence that names two or more of the choices
+    together with prices is replaced by the plain question (or dropped when it was not a question). Nothing else is touched."""
+    if not reply or not asks_budget(reply):
+        return reply
+    m = re.search(r"\n?<search>", reply)
+    head, tail = (reply[:m.start()], reply[m.start():]) if m else (reply, "")
+    parts = re.split(r"(?<=[.!?।])\s+", head.strip())
+    out, asked, changed = [], False, False
+    for part in parts:
+        if _PRICE.search(part) and sum(1 for w in _TIER_WORDS if w.search(part)) >= 2:
+            changed = True
+            if "?" in part and not asked:
+                out.append(fixed("ask_budget", lang))
+                asked = True
+            continue
+        out.append(part)
+    if not changed:
+        return reply
+    if not asked:
+        # the choices were only in the dropped sentence: the remaining budget question (or a new one) names them, without prices
+        q = next((i for i, x in enumerate(out) if "?" in x and _Q_BUDGET.search(x)), None)
+        if q is None:
+            out.append(fixed("ask_budget", lang))
+        else:
+            out[q] = fixed("ask_budget", lang)
+    return " ".join(x for x in out if x) + tail
 
 
 def asks_known_slot(spoken: str, trip: Optional[Dict[str, Any]], user_message: str) -> bool:
@@ -675,10 +705,25 @@ FIXED = {
         "hinglish": "Bataiye kya badalna hai: dates, log, budget ya shehar.",
         "hi": "बताइए क्या बदलना है: तारीख, लोग, बजट या शहर।",
     },
-    "budget_ranges": {
-        "en": "Cheap is under ₹1,500, medium is ₹1,500 to ₹3,000 and premium is over ₹3,000, per room per night.",
-        "hinglish": "Sasta ₹1,500 se kam, madhyam ₹1,500 se ₹3,000 tak aur premium ₹3,000 se upar, per room per night.",
-        "hi": "सस्ता ₹1,500 से कम, मध्यम ₹1,500 से ₹3,000 तक और प्रीमियम ₹3,000 से ऊपर, प्रति कमरा प्रति रात।",
+    "ask_budget": {
+        "en": "What budget would you like: cheap, medium or premium?",
+        "hinglish": "Budget kaisa chahiye: sasta, madhyam ya premium?",
+        "hi": "बजट कैसा चाहिए: सस्ता, मध्यम या प्रीमियम?",
+    },
+    "widened_amount": {
+        "en": "No hotel here fits ₹{amount} a night, so these are the closest prices.",
+        "hinglish": "₹{amount} per night me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe.",
+        "hi": "₹{amount} प्रति रात में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे।",
+    },
+    "widened_tier": {
+        "en": "No hotel here fits that budget exactly, so these are the closest prices.",
+        "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe.",
+        "hi": "इस बजट में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे।",
+    },
+    "hotels_unavailable": {
+        "en": "Live hotels are not available right now. Please try again shortly.",
+        "hinglish": "Abhi live hotels nahi mil paa rahe. Thodi der baad dobara try karein.",
+        "hi": "अभी लाइव होटल नहीं मिल पा रहे। थोड़ी देर बाद फिर कोशिश करें।",
     },
     "ask_city": {
         "en": "Which city should I look in? Please tell me the city name again.",
