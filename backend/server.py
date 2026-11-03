@@ -1563,8 +1563,10 @@ def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any
         nights = max(1, (end - start).days) if (start and end and end > start) else 1
         rooms = max(1, min(int(trip.get("rooms") or 1), int(trip.get("travellers") or 1)))
         per_night = float(trip["budget"]) / (nights * rooms)
-        # the tier the visitor's amount falls in, else the next one up (the amount itself found nothing)
-        nxt = next((t for t in ("low", "medium", "high") if TIER_BANDS[t][1] is None or per_night < TIER_BANDS[t][1]), "high")
+        # the closest prices just shown are the bottom of the tier the amount falls in: "a little higher" is the tier after it
+        tiers = ("low", "medium", "high")
+        inside = next(i for i, t in enumerate(tiers) if TIER_BANDS[t][1] is None or per_night < TIER_BANDS[t][1])
+        nxt = tiers[min(inside + 1, len(tiers) - 1)]
         step.pop("budget", None)
         step["budget_tier"] = nxt
         return step, "budget_up"
