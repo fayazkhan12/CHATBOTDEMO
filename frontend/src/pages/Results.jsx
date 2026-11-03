@@ -42,6 +42,7 @@ export default function Results() {
       travellers: Number(initial.travellers || 2),
     };
     if (initial.destination_id) out.destination_id = initial.destination_id;
+    if (service === "hotels" && initial.area) out.area = initial.area;
     if (service === "hotels") {      // rooms and children (travellers = the adults)
       const occ = readOccupancy(initial);
       out.rooms = occ.rooms;
@@ -124,7 +125,7 @@ export default function Results() {
   const first = data.results[0] || {};
   const subtitle = (() => {
     if (service === "hotels") {
-      const parts = [`Hotels in ${initial.destination || "your city"}`];
+      const parts = [initial.area ? `Hotels near ${initial.area}, ${initial.destination || "your city"}` : `Hotels in ${initial.destination || "your city"}`];
       const range = dateRange(first.check_in || startDate, first.check_out || endDate);
       if (range) parts.push(range);
       const occ = readOccupancy(initial);

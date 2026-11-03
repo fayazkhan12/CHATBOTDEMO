@@ -539,7 +539,9 @@ def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = Non
         "id": f"ak-{h.get('supplierHotelId')}",
         "type": "hotel", "provider": "Akbar", "mode": "LIVE",
         "title": h.get("name") or "Hotel",
-        "brand": f"{city} - {h.get('starRating')} star" if h.get("starRating") else city,
+        "brand": " - ".join(x for x in (
+            f"{distance_km:.1f} km from {area}" if (distance_km is not None and area) else city,
+            f"{h.get('starRating')} star" if h.get("starRating") else "") if x),
         "origin": city, "destination": city,
         "stars": stars if 0 < stars <= 5 else 0,
         "rating": rating,                 # the guests' rating only; 0 when the hotel has none (no star rating shown as a rating)

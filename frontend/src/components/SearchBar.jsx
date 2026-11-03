@@ -48,8 +48,10 @@ export default function SearchBar({ initial = {}, onSubmit }) {
 
   const [service, setService] = useState(initial.service || "flights");
   const [origin, setOrigin] = useState(initial.origin || "New Delhi");
-  const [destination, setDestination] = useState(initial.destination || "Goa");
+  const [destination, setDestination] = useState(initial.area ? initial.area : (initial.destination || "Goa"));
   const [destinationId, setDestinationId] = useState(initial.destination_id || "");
+  // a locality picked from the list ("Vaishali Nagar"): we search its CITY and rank hotels by distance from it
+  const [areaPick, setAreaPick] = useState(initial.area ? { area: initial.area, label: initial.area, city: initial.destination || "" } : null);
   const [startDate, setStartDate] = useState(initial.start_date || dayFromNow(1));
   const [endDate, setEndDate] = useState(initial.end_date || dayFromNow(3));
   const occ = readOccupancy(initial);
@@ -89,16 +91,18 @@ export default function SearchBar({ initial = {}, onSubmit }) {
       toast.error(problem);
       return;
     }
+    const useArea = hotel && areaPick && areaPick.city && String(destination).trim() === areaPick.label;
     const payload = {
       service,
       origin: String(origin).trim(),
-      destination: String(destination).trim(),
+      destination: useArea ? areaPick.city : String(destination).trim(),
+      ...(useArea ? { area: areaPick.area } : {}),
       start_date: startDate,
       end_date: hotel ? endDate : startDate,
       travellers,
       ...(hotel && rooms > 1 ? { rooms } : {}),
       ...(hotel && children > 0 ? { children, child_ages: childAges.slice(0, children).join(",") } : {}),
-      ...(destinationId ? { destination_id: destinationId } : {}),
+      ...(destinationId && !useArea ? { destination_id: destinationId } : {}),
     };
     if (onSubmit) return onSubmit(payload);
     const q = new URLSearchParams(payload).toString();
@@ -172,8 +176,12 @@ export default function SearchBar({ initial = {}, onSubmit }) {
           <div className="field-input">
             <DestinationInput
               value={destination}
-              onChange={(v) => { setDestination(v); setDestinationId(""); }}
-              onSelect={(r) => setDestinationId(r.supplierLocationId || r.id || "")}
+              onChange={(v) => { setDestination(v); setDestinationId(""); setAreaPick(null); }}
+              onSelect={(r) => {
+                setDestinationId(r.supplierLocationId || r.id || "");
+                const isArea = hotel && ["neighborhood", "region", "pointOfInterest", "trainStation", "airport"].includes(r.type) && r.city;
+                setAreaPick(isArea ? { area: r.label, label: r.label, city: r.city } : null);
+              }}
               placeholder={hotel ? "City or area" : "Where to?"}
               testid="destination-input"
             />
