@@ -488,6 +488,16 @@ _GUESTS = re.compile(
     r"|\bfor\s+(\d{1,2})\b(?!\s*(?:nights?|days?|din|raat))|(?<!\d)(\d{1,2})\s+ke liye\b", re.I)
 
 
+_SHORT_YES = re.compile(
+    r"^\s*(?:h+n+|ha+n*|haa+n*|han ji|haan ji|ji|ji haan|ji ha+n|yes|yeah|yep|yup|ok(?:ay)?|ok(?:ay)? ji|theek hai|thik hai|thik h|theek|thik|chalo|"
+    r"kar ?do|kr ?do|dekh lo|dekho|dikhao|sure|please|haan dikhao|ha dikhao|हाँ|हां|हा|ठीक है|जी|जी हाँ|हाँ जी|दिखाओ)\s*[.!]*\s*$", re.I)
+
+
+def is_short_yes(user_text: str) -> bool:
+    """'hn', 'haan', 'ok', 'yes', 'theek hai': the visitor agrees to what was just offered, nothing more."""
+    return bool(_SHORT_YES.match(str(user_text or "")))
+
+
 def quick_edit(trip: Optional[Dict[str, Any]], user_text: str) -> Optional[Dict[str, Any]]:
     """The visitor only changed the budget or the number of guests: apply it to the current trip. None when it is anything else."""
     if not trip or trip.get("service") not in ("hotels", "flights", "buses"):
@@ -711,14 +721,34 @@ FIXED = {
         "hi": "बजट कैसा चाहिए: सस्ता, मध्यम या प्रीमियम?",
     },
     "widened_amount": {
-        "en": "No hotel here fits ₹{amount} a night, so these are the closest prices.",
-        "hinglish": "₹{amount} per night me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe.",
-        "hi": "₹{amount} प्रति रात में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे।",
+        "en": "No hotel here fits ₹{amount} a night, so these are the closest prices. Shall I look a little higher?",
+        "hinglish": "₹{amount} per night me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe. Thoda upar ke budget me dekhun?",
+        "hi": "₹{amount} प्रति रात में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे। थोड़ा ऊपर के बजट में देखूँ?",
     },
     "widened_tier": {
-        "en": "No hotel here fits that budget exactly, so these are the closest prices.",
-        "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe.",
-        "hi": "इस बजट में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे।",
+        "en": "No hotel here fits that budget exactly, so these are the closest prices. Shall I look a little higher?",
+        "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe. Thoda upar ke budget me dekhun?",
+        "hi": "इस बजट में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे। थोड़ा ऊपर के बजट में देखूँ?",
+    },
+    "widened_tier_down": {
+        "en": "No hotel here fits that budget exactly, so these are the closest prices. Shall I look at medium instead?",
+        "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe. Madhyam budget me dekhun?",
+        "hi": "इस बजट में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे। मध्यम बजट में देखूँ?",
+    },
+    "budget_up": {
+        "en": "Okay, looking a little higher.",
+        "hinglish": "Theek hai, thoda upar ke budget me dekhte hain.",
+        "hi": "ठीक है, थोड़ा ऊपर के बजट में देखते हैं।",
+    },
+    "budget_down": {
+        "en": "Okay, looking at medium prices.",
+        "hinglish": "Theek hai, madhyam budget me dekhte hain.",
+        "hi": "ठीक है, मध्यम बजट में देखते हैं।",
+    },
+    "search_again": {
+        "en": "Okay, trying again.",
+        "hinglish": "Theek hai, dobara dekhte hain.",
+        "hi": "ठीक है, फिर से देखते हैं।",
     },
     "hotels_unavailable": {
         "en": "Live hotels are not available right now. Please try again shortly.",

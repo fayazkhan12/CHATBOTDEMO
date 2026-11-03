@@ -758,7 +758,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
         if widened:
             per_night = round(hi / (nights * rooms)) if (req.budget and hi) else 0
             note = (cmem.fixed("widened_amount", req.lang or "en").format(amount=f"{per_night:,}") if per_night
-                    else cmem.fixed("widened_tier", req.lang or "en"))
+                    else cmem.fixed("widened_tier_down" if req.budget_tier == "high" else "widened_tier", req.lang or "en"))
         return {"items": out, "total": total, "page": page, "note": note, "widened": widened}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
@@ -1547,6 +1547,34 @@ async def _resolve_city(name: str) -> Optional[Dict[str, Any]]:
     return (exact or cities)[0]
 
 
+def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], str]]:
+    """The visitor said yes after a hotel search that found nothing, or only the prices closest to the budget (the note asked
+    "shall I look a little higher?"): the next search, and the line that goes with it. None when there is nothing to step."""
+    if not trip or trip.get("service") != "hotels" or not results or results.get("service") != "hotels":
+        return None
+    if not results.get("items") and not results.get("widened"):
+        return dict(trip), "search_again"             # nothing came back (the supplier was busy): the same search once more
+    if not results.get("widened"):
+        return None
+    step = dict(trip)
+    tier = trip.get("budget_tier")
+    if trip.get("budget"):
+        start, end = _parse_day(trip.get("start_date")), _parse_day(trip.get("end_date"))
+        nights = max(1, (end - start).days) if (start and end and end > start) else 1
+        rooms = max(1, min(int(trip.get("rooms") or 1), int(trip.get("travellers") or 1)))
+        per_night = float(trip["budget"]) / (nights * rooms)
+        # the tier the visitor's amount falls in, else the next one up (the amount itself found nothing)
+        nxt = next((t for t in ("low", "medium", "high") if TIER_BANDS[t][1] is None or per_night < TIER_BANDS[t][1]), "high")
+        step.pop("budget", None)
+        step["budget_tier"] = nxt
+        return step, "budget_up"
+    if tier == "high":
+        step["budget_tier"] = "medium"
+        return step, "budget_down"
+    step["budget_tier"] = "high" if tier == "medium" else "medium"
+    return step, "budget_up"
+
+
 async def _locality_is_only_in(city: str, area: str) -> bool:
     """True when `area` (a neighbourhood, landmark, station) is known to the supplier in `city` and in no other city:
     then a visitor who named the area has named the city too. A locality that exists in several cities is not clear."""
@@ -2174,6 +2202,19 @@ async def chat_stream(req: ChatRequest, request: Request):
             _spawn(_log_chat(user_text, quick, req.language))
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
             return
+
+        # "hn" after "nothing in this budget, shall I look a little higher?": step the budget ourselves, no guessing by the model
+        step = _budget_step(trip, results) if cmem.is_short_yes(user_text) else None
+        if step:
+            line = cmem.fixed(step[1], lang)
+            reply, block = await _postprocess_reply(f"{line}\n<search>{cmem.block_json(step[0])}</search>", " ".join(cmem.user_texts(req.history) + [user_text]),
+                                                    today, trip, lang, True)
+            if block:
+                _remember_search(_client_ip(request), block)
+                yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"
+                _spawn(_log_chat(user_text, reply, req.language))
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                return
 
         name = cmem.text((req.context or {}).get("user"), 40) if isinstance(req.context, dict) else ""
         prefix = f"[Travel context: {json.dumps({'user': name}, ensure_ascii=False)}]\n" if name else ""
