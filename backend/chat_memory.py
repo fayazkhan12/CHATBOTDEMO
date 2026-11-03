@@ -736,6 +736,11 @@ FIXED = {
         "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe. Thoda upar ke budget me dekhun?",
         "hi": "इस बजट में यहाँ कोई होटल नहीं मिला, इसलिए उसके सबसे करीब वाले होटल ये रहे। थोड़ा ऊपर के बजट में देखूँ?",
     },
+    "widened_area": {
+        "en": "No hotel near {area} fits that budget, so these are the nearby hotels with the closest prices. Shall I look a little higher?",
+        "hinglish": "{area} ke paas is budget me koi hotel nahi mila, isliye wahan ke sabse kam daam wale hotels ye rahe. Thoda upar ke budget me dekhun?",
+        "hi": "{area} के पास इस बजट में कोई होटल नहीं मिला, इसलिए वहाँ के सबसे कम दाम वाले होटल ये रहे। थोड़ा ऊपर के बजट में देखूँ?",
+    },
     "widened_tier_down": {
         "en": "No hotel here fits that budget exactly, so these are the closest prices. Shall I look at medium instead?",
         "hinglish": "Is budget me yahan koi hotel nahi mila, isliye iske sabse kareeb wale hotels ye rahe. Madhyam budget me dekhun?",

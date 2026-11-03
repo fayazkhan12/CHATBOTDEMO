@@ -704,6 +704,8 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                     first = await fetch(1, PAGE_SIZE, lo, hi)
                     in_window = int(((first or {}).get("pagination") or {}).get("total") or 0)
                     near = await _hotels_near(fetch_window, in_window, center, req) if in_window else None
+                    if near and near[0] and min(dist for dist, _ in near[0]) > AREA_RADIUS_KM:
+                        near = None        # inside the budget only far from the area: the area matters more, see below
                     if not near or not near[0]:
                         # nothing near the area at this price: the nearby hotels whose price is closest to it
                         near = await _hotels_near(fetch, total, center, req, closest=gap)
@@ -759,7 +761,8 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
         if widened:
             per = lambda v: f"{round(v / (nights * rooms)):,}"   # noqa: E731
             amount = (f"{per(lo)}-{per(hi)}" if (lo and hi) else per(hi) if hi else per(lo) if lo else "") if (req.budget or req.budget_min) else ""
-            note = (cmem.fixed("widened_amount", req.lang or "en").format(amount=amount) if amount
+            note = (cmem.fixed("widened_area", req.lang or "en").format(area=center["label"]) if (center and near and near[0])
+                    else cmem.fixed("widened_amount", req.lang or "en").format(amount=amount) if amount
                     else cmem.fixed("widened_tier_down" if req.budget_tier == "high" else "widened_tier", req.lang or "en"))
         return {"items": out, "total": total, "page": page, "note": note, "widened": widened}
     except Exception as exc:
