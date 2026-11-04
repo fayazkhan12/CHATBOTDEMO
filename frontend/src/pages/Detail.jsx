@@ -93,14 +93,14 @@ export default function Detail() {
   const [checks, setChecks] = useState({});
   const roomId = room ? room.recommendation_id : "";
   useEffect(() => {
-    if (!item || !roomId || item.mode !== "LIVE" || !item.search_id || checks[roomId]) return undefined;
+    if (!item || !roomId || item.mode !== "LIVE" || !item.search_id || (checks[roomId] && checks[roomId].reason !== "login")) return undefined;
     let stale = false;
     setChecks((c) => ({ ...c, [roomId]: { state: "loading" } }));
     http.post("/hotels/price-check", { search_id: item.search_id, hotel_id: hotelIdOf(item), recommendation_id: roomId }, { timeout: 40000 })
       .then(({ data }) => { if (!stale) setChecks((c) => ({ ...c, [roomId]: data && data.available ? { state: "ok", ...data.price } : { state: "off", reason: data && data.reason } })); })
       .catch(() => { if (!stale) setChecks((c) => ({ ...c, [roomId]: { state: "off", reason: "unavailable" } })); });
     return () => { stale = true; };
-  }, [item, roomId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [item, roomId, user]); // eslint-disable-line react-hooks/exhaustive-deps
   const check = roomId ? checks[roomId] : null;
   const checked = check && check.state === "ok" ? check : null;
 
@@ -433,10 +433,14 @@ export default function Detail() {
           ) : (
             <>
               {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">You save {money(room.price.savings)} (was {money(room.price.before_coupon)})</div> : null}
-              {isLiveHotel && room ? (
-                <div style={{color:'var(--muted)',fontSize:12,margin:'6px 0 10px'}} data-testid="price-note">
-                  {check && check.state === "loading" ? "Checking the booking price…" : "Final price and coupon are confirmed when you book on destinoway.com."}
-                </div>
+              {isLiveHotel && room && check && check.state === "loading" ? (
+                <div style={{color:'var(--muted)',fontSize:12,margin:'6px 0 10px'}} data-testid="price-note">Checking the booking price…</div>
+              ) : null}
+              {isLiveHotel && room && check && check.state === "off" && check.reason === "login" ? (
+                <button type="button" className="btn-ghost" style={{width:'100%',margin:'6px 0 10px'}} data-testid="price-login"
+                        onClick={() => navigate(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)}>
+                  Log in with your DestinoWay account to see your booking price
+                </button>
               ) : null}
             </>
           )}

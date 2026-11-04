@@ -123,7 +123,7 @@ export default function Login() {
               </form>
             ) : (
               <form className="auth-form" onSubmit={checkOtp}>
-                <small>{identifier} par 6-digit OTP bheja gaya hai</small>
+                <small>{identifier} par OTP bheja gaya hai (aapke DestinoWay account ka, wahi jo destinoway.com pe hai)</small>
                 {devOtp && (
                   <div className="demo-otp" data-testid="demo-otp">
                     Demo mode: aapka OTP <strong>{devOtp}</strong> (asli SMS abhi band hai)
@@ -131,7 +131,7 @@ export default function Login() {
                 )}
                 <input
                   inputMode="numeric"
-                  maxLength={6}
+                  maxLength={10}
                   placeholder="------"
                   autoComplete="one-time-code"
                   value={code}
@@ -139,7 +139,7 @@ export default function Login() {
                   required
                   data-testid="otp-code"
                 />
-                <button className="auth-submit" type="submit" disabled={busy || code.length !== 6} data-testid="otp-verify">
+                <button className="auth-submit" type="submit" disabled={busy || code.length < 4} data-testid="otp-verify">
                   {busy ? "Please wait…" : "Verify & continue"}
                 </button>
                 <button type="button" className="btn-ghost" disabled={cooldown > 0 || busy} onClick={sendOtp} data-testid="otp-resend">

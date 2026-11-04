@@ -830,7 +830,7 @@ class OtpRequestIn(BaseModel):
 class OtpVerifyIn(BaseModel):
     channel: Literal["phone", "email"]
     identifier: str = Field(min_length=3, max_length=120)
-    code: str = Field(pattern=r"^\d{6}$")
+    code: str = Field(pattern=r"^\d{4,10}$")      # 6 digits here; the DestinoWay (Twilio) OTP may be 4-10
     name: Optional[str] = Field(None, max_length=80)
 
 
@@ -878,12 +878,135 @@ async def health_db():
         return {"mongo": False, "error": type(exc).__name__}
 
 
+# ---------- the DestinoWay account (the company website's own login) ----------
+# With COMPANY_LOGIN on (the default when the company API is set), the OTP is sent and checked by the company API
+# (/customer/auth/otp, /customer/auth/email): the visitor logs in with the same DestinoWay account as on the website, and the
+# chatbot keeps that account's tokens (encrypted) so the website's own booking price check can run for this visitor.
+COMPANY_LOGIN = os.environ.get("COMPANY_LOGIN", "1" if AKBAR_HOST else "0").strip().lower() in ("1", "true", "yes", "on")
+COMPANY_ACCESS_SECONDS = 50 * 60     # the company access token lives 60 minutes
+
+
+def _fernet():
+    import base64
+    from cryptography.fernet import Fernet
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(f"{JWT_SECRET}|company-tokens".encode()).digest()))
+
+
+def _seal(value: str) -> str:
+    return _fernet().encrypt(value.encode()).decode() if value else ""
+
+
+def _unseal(value: Any) -> str:
+    try:
+        return _fernet().decrypt(str(value).encode()).decode() if value else ""
+    except Exception:
+        return ""
+
+
+async def _company_post(path: str, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(25.0, connect=8.0)) as c:
+            r = await c.post(f"{AKBAR_HOST}/api/v1/customer/auth/{path}", json=body)
+    except httpx.HTTPError as exc:
+        logger.warning("company login %s failed: %s", path, type(exc).__name__)
+        return 0, {}
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    return r.status_code, data if isinstance(data, dict) else {}
+
+
+def _company_error(status: int, data: Dict[str, Any], fallback: str) -> HTTPException:
+    msg = _clean(data.get("message"), 160) if isinstance(data.get("message"), str) else ""
+    if status == 429:
+        return HTTPException(status_code=429, detail=msg or "Please wait a moment before trying again")
+    if status in (400, 401, 403, 404):
+        return HTTPException(status_code=400, detail=msg or fallback)
+    return HTTPException(status_code=503, detail="The DestinoWay login is not reachable right now. Please try again shortly")
+
+
+async def company_access_token(user: Optional[Dict[str, Any]], fresh: bool = False) -> str:
+    """The visitor's DestinoWay access token, renewed with their refresh token when it has run out. "" without a DestinoWay login."""
+    comp = (user or {}).get("company") or {}
+    if not comp or not COMPANY_LOGIN:
+        return ""
+    access = _unseal(comp.get("access"))
+    try:
+        until = float(comp.get("access_until") or 0)
+    except (TypeError, ValueError):
+        until = 0.0
+    if access and until > time.time() and not fresh:
+        return access
+    refresh = _unseal(comp.get("refresh"))
+    if not refresh:
+        return ""
+    status, data = await _company_post("refresh", {"refreshToken": refresh})
+    new = str(data.get("accessToken") or "") if status == 200 else ""
+    try:
+        if new:
+            await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"company.access": _seal(new),
+                                                                              "company.access_until": time.time() + COMPANY_ACCESS_SECONDS}})
+        elif status in (401, 403):          # logged in somewhere else since: the website keeps one session per account
+            await db.users.update_one({"user_id": user["user_id"]}, {"$unset": {"company": ""}})
+    except Exception as exc:
+        logger.warning("company token save failed: %s", type(exc).__name__)
+    return new
+
+
+async def _company_otp_request(channel: str, ident: str) -> Dict[str, Any]:
+    path, body = ("otp/send", {"mobile": ident[-10:]}) if channel == "phone" else ("email/send", {"email": ident})
+    status, data = await _company_post(path, body)
+    if status != 200 or data.get("success") is False:
+        raise _company_error(status, data, "Could not send the OTP. Please check the number and try again")
+    return {"ok": True, "expires_in": 600, "provider": "destinoway"}
+
+
+async def _company_otp_verify(body: "OtpVerifyIn", ident: str) -> Dict[str, Any]:
+    path, req = (("otp/verify", {"mobile": ident[-10:], "otp": body.code}) if body.channel == "phone"
+                 else ("email/verify", {"email": ident, "otp": body.code}))
+    status, data = await _company_post(path, req)
+    info = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if status != 200 or data.get("success") is False or not info.get("accessToken"):
+        raise _company_error(status, data, "Incorrect OTP")
+    field = "phone" if body.channel == "phone" else "email"
+    company = {"id": _clean(info.get("_id"), 40), "access": _seal(str(info["accessToken"])), "refresh": _seal(str(info.get("refreshToken") or "")),
+               "access_until": time.time() + COMPANY_ACCESS_SECONDS}
+    name = _clean(info.get("name"), 80) or (body.name or "").strip()
+    try:
+        user = await db.users.find_one({field: ident})
+        if not user:
+            user = {"user_id": f"user_{uuid.uuid4().hex[:12]}", field: ident, "name": name or "Traveller", "picture": None,
+                    "provider": "destinoway", "created_at": datetime.now(timezone.utc).isoformat()}
+            await db.users.insert_one(dict(user))
+        changes: Dict[str, Any] = {"company": company}
+        if name and (user.get("name") in (None, "", "Traveller")):
+            changes["name"] = name
+            user["name"] = name
+        other = _clean(info.get("email"), 120) if field == "phone" else ""
+        if other and not user.get("email"):
+            changes["email"] = other.lower()
+            user["email"] = other.lower()
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": changes})
+    except Exception as exc:
+        logger.warning("company login save failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database is temporarily unavailable")
+    return {
+        "token": _make_jwt(user["user_id"]),
+        "user": {"user_id": user["user_id"], "email": user.get("email"), "phone": user.get("phone"),
+                 "name": user.get("name"), "picture": user.get("picture")},
+        "provider": "destinoway",
+    }
+
+
 @api.post("/auth/otp/request")
 async def otp_request(body: OtpRequestIn, request: Request):
     global _OTP_INDEX_READY
     _rate_limit(f"otpreq-ip:{_client_ip(request)}", 10, 600)
     ident = _norm_identifier(body.channel, body.identifier)
     _rate_limit(f"otpreq:{ident}", 5, 600)
+    if COMPANY_LOGIN:
+        return await _company_otp_request(body.channel, ident)
     key = f"{body.channel}:{ident}"
     now = datetime.now(timezone.utc)
     code = f"{_secrets.randbelow(1_000_000):06d}"
@@ -917,6 +1040,8 @@ async def otp_request(body: OtpRequestIn, request: Request):
 async def otp_verify(body: OtpVerifyIn, request: Request):
     _rate_limit(f"otpver-ip:{_client_ip(request)}", 30, 600)
     ident = _norm_identifier(body.channel, body.identifier)
+    if COMPANY_LOGIN:
+        return await _company_otp_verify(body, ident)
     key = f"{body.channel}:{ident}"
     try:
         rec = await db.otp_codes.find_one({"_id": key})
@@ -2326,6 +2451,11 @@ try:  # live hotel photos, rooms and prices (patch_live); an optional feature mu
     except ImportError:  # the app was started from the repo root as backend.server
         from backend import hotel_live as _hotel_live
     _hotel_live.set_signer(_price_token)
+
+    async def _visitor_company_token(request: Request, fresh: bool = False) -> str:
+        return await company_access_token(await _user_from_request(request), fresh)
+
+    _hotel_live.set_token_source(_visitor_company_token)
     app.include_router(_hotel_live.router)
 except Exception:
     logger.exception("live hotel details are switched off")
