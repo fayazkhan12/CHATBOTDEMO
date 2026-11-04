@@ -9,6 +9,7 @@ import { useAuth } from "../lib/auth";
 import { noteSelection, selectionFromItem } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
 import { money, shortDate, clockTime, dateRange, plural, guestLine } from "../lib/format";
+import { companyBookingUrl, companyHotelUrl } from "../lib/company";
 
 // hotel ids on the website look like ak-<supplierHotelId>
 function hotelIdOf(item) {
@@ -170,6 +171,7 @@ export default function Detail() {
   const type = item.type || "hotel";
   const isHotel = type === "hotel";
   const isDemo = item.mode !== "LIVE";
+  const siteUrl = isHotel ? (companyBookingUrl(item, hotelIdOf(item), room) || companyHotelUrl(item, hotelIdOf(item))) : "";
   const isLiveHotel = isHotel && !isDemo;
 
   const amenities = isHotel
@@ -349,6 +351,9 @@ export default function Detail() {
                           <span className={`dl-chip${r.free_cancellation_until ? " dl-chip-good" : r.refundable ? "" : " dl-chip-warn"}`}>{r.cancellation}</span>
                           {r.rooms_left ? <span className="dl-chip dl-chip-warn">Only {r.rooms_left} left</span> : null}
                           {r.pay_at_hotel ? <span className="dl-chip">Pay at hotel</span> : null}
+                          {r.smoking ? <span className="dl-chip">{r.smoking}</span> : null}
+                          {r.all_guests_required ? <span className="dl-chip">All guest details required</span> : null}
+                          {r.available ? <span className="dl-chip dl-chip-good">{r.available} available</span> : null}
                         </span>
                       </span>
                       <span className="dl-room-price">
@@ -422,6 +427,13 @@ export default function Detail() {
           <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:10,lineHeight:1.5}}>
             {isDemo ? "Demo listing. No real payment is taken." : "Demo booking for now: this reservation is not sent to the hotel and no real money is charged."}
           </p>
+          {siteUrl && (
+            <a className="btn-ghost dl-site-cta" href={siteUrl} target="_blank" rel="noopener noreferrer" data-testid="book-on-site"
+               style={{display:'block',width:'100%',marginTop:12,padding:'12px',textAlign:'center',boxSizing:'border-box'}}>
+              {room ? "Book this room on destinoway.com" : "Open on destinoway.com"}
+            </a>
+          )}
+          {siteUrl && <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:6,lineHeight:1.5}}>Opens the same {room ? "room" : "hotel"} on the DestinoWay website, where the booking is made.</p>}
           {isHotel && (
             <button className="btn-ghost detail-ride-cta" style={{width:'100%',marginTop:12}} onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel">
               <Car size={14}/> Book a ride to this hotel

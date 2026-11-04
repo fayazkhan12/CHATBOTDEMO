@@ -319,6 +319,22 @@ def _price(p: Any, nights: Optional[int]) -> Optional[Dict[str, Any]]:
     return out
 
 
+def _smoking(room: Dict[str, Any], group: Dict[str, Any]) -> Optional[str]:
+    """'Non-smoking' / 'Smoking' when the supplier says so, else None."""
+    for src in (room, group):
+        for key in ("smokingAllowed", "isSmokingAllowed", "smoking", "smokingPreference"):
+            v = src.get(key)
+            if isinstance(v, bool):
+                return "Smoking" if v else "Non-smoking"
+            if isinstance(v, str) and v.strip():
+                t = v.strip().lower()
+                if "non" in t or t in ("no", "false"):
+                    return "Non-smoking"
+                if "smok" in t or t in ("yes", "true"):
+                    return "Smoking"
+    return None
+
+
 def clean_rooms(payload: Any, nights: Optional[int] = None, item_id: Optional[str] = None) -> Dict[str, Any]:
     rooms: List[Dict[str, Any]] = []
     seen = set()
@@ -381,6 +397,9 @@ def clean_rooms(payload: Any, nights: Optional[int] = None, item_id: Optional[st
                 "free_cancellation_until": free_until,
                 "cancellation": cancel_text,
                 "pay_at_hotel": g.get("payAtHotel") is True,
+                "all_guests_required": g.get("allGuestsInfoRequired") is True,
+                "smoking": _smoking(room, g),
+                "available": int(left) if left is not None and 3 < left <= 99 else None,
                 "rooms_left": int(left) if left is not None and 0 < left <= 3 else None,
                 "price": price,
             }
