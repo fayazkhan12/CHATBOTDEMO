@@ -569,3 +569,112 @@ async def hotel_live(search_id: str, hotel_id: str, request: Request, nights: Op
     if data["content"] or data["rooms"]:
         _CACHE[key] = (now + _CACHE_TTL, data)
     return data
+
+
+# ---------------------------------------------------------------- the booking price, as the DestinoWay website charges it
+# The website's booking page calls POST /hotelDetails/search/:searchId/:hotelId/price-check {recommendationId}. The supplier is
+# asked for the room's price again and the website's best auto coupon is applied: that is the price the customer pays.
+# The route needs a logged-in DestinoWay customer, so the chatbot uses its own customer account: COMPANY_REFRESH_TOKEN (7 days,
+# from POST /customer/auth/refresh) gives access tokens of 60 minutes. Without it nothing changes: the page shows a note instead.
+_ACCESS: Dict[str, Any] = {"token": "", "until": 0.0}
+_PC_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_PC_TTL = 120
+
+
+def _host() -> str:
+    return (os.environ.get("NODE_API_BASE") or os.environ.get("AKBAR_API_HOST") or "").rstrip("/")
+
+
+async def _company_token(client: httpx.AsyncClient, fresh: bool = False) -> str:
+    refresh = (os.environ.get("COMPANY_REFRESH_TOKEN") or "").strip()
+    if not refresh or not _host():
+        return ""
+    if not fresh and _ACCESS["token"] and _ACCESS["until"] > time.time():
+        return _ACCESS["token"]
+    try:
+        r = await client.post(f"{_host()}/api/v1/customer/auth/refresh", json={"refreshToken": refresh})
+    except httpx.HTTPError as exc:
+        log.warning("company login refresh failed: %s", type(exc).__name__)
+        return ""
+    if r.status_code != 200:
+        log.warning("company login refresh refused: %s (the refresh token may have expired or been replaced by a new login)", r.status_code)
+        _ACCESS.update(token="", until=0.0)
+        return ""
+    tok = str(_d(r.json()).get("accessToken") or "")
+    _ACCESS.update(token=tok, until=time.time() + 50 * 60 if tok else 0.0)
+    return tok
+
+
+def clean_price_check(payload: Any, item_id: Optional[str], recommendation_id: str) -> Optional[Dict[str, Any]]:
+    """Only what the customer sees on the website's Price Breakup: base, taxes, coupon, total. None when there is no price."""
+    d = _d(_d(payload).get("data"))
+    total = _money(d.get("totalPayable"))
+    if not total:
+        return None
+    base = tax = 0.0
+    for room in _l(_d(d.get("pricing")).get("rooms")):
+        cp = _d(_d(room).get("customerPrice"))
+        n = int(_num(_d(room).get("roomCount")) or 1)
+        base += (_money(cp.get("basePrice")) or 0) * n
+        tax += (_money(cp.get("platform&servicetax")) or 0) * n
+    discount = _money(d.get("couponDiscount")) or 0.0
+    out: Dict[str, Any] = {
+        "total": total, "currency": str(d.get("currency") or "INR")[:3],
+        "base": round(base, 2) or None, "service_tax": round(tax, 2) or None,
+        "coupon": _text(d.get("appliedCoupon"), 30) or None, "coupon_discount": round(discount, 2) if discount else 0.0,
+        "before_coupon": round(total + discount, 2) if discount else None,
+        "coupons": [{"code": _text(c.get("code"), 30), "title": _text(c.get("title"), 60), "discount": _money(c.get("discount"))}
+                    for c in (_d(x) for x in _l(d.get("availableCoupons"))[:5]) if _text(c.get("code"), 30)],
+    }
+    booking_id = f"{item_id}#{recommendation_id}" if item_id else None
+    if _SIGN and booking_id and len(booking_id) <= 100:
+        try:
+            out["booking_id"] = booking_id
+            out["price_token"] = _SIGN(booking_id, total)
+        except Exception:
+            log.warning("could not sign the checked price", exc_info=True)
+    return out
+
+
+@router.post("/hotels/price-check")
+async def hotel_price_check(request: Request, body: Dict[str, Any]):
+    sid, hid, rid = (str((body or {}).get(k) or "") for k in ("search_id", "hotel_id", "recommendation_id"))
+    if not (_ID_RE.match(sid) and _ID_RE.match(hid) and _ID_RE.match(rid)):
+        raise HTTPException(status_code=400, detail="Invalid room reference.")
+    _limit(f"pc:{_client_ip(request)}", 20)
+    if not (os.environ.get("COMPANY_REFRESH_TOKEN") or "").strip() or not _host():
+        return {"available": False, "reason": "not_configured"}
+    key = f"{sid}|{hid}|{rid}"
+    hit = _PC_CACHE.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    url = f"{_host()}/api/v1/hotelDetails/search/{sid}/{hid}/price-check"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)) as client:
+        r = None
+        for fresh in (False, True):           # a stale access token: log in again once
+            tok = await _company_token(client, fresh)
+            if not tok:
+                return {"available": False, "reason": "login"}
+            try:
+                r = await client.post(url, json={"recommendationId": rid}, headers={"Authorization": f"Bearer {tok}"})
+            except httpx.HTTPError as exc:
+                log.warning("price check failed: %s", type(exc).__name__)
+                return {"available": False, "reason": "unavailable"}
+            if r.status_code != 401:
+                break
+    if r is None or r.status_code in (400, 404, 410):
+        return {"available": False, "reason": "expired"}
+    if r.status_code != 200:
+        log.warning("price check http %s", r.status_code)
+        return {"available": False, "reason": "unavailable"}
+    try:
+        price = clean_price_check(r.json(), f"{ITEM_PREFIX}{hid}", rid)
+    except ValueError:
+        price = None
+    if not price:
+        return {"available": False, "reason": "unavailable"}
+    out = {"available": True, "price": price}
+    if len(_PC_CACHE) > 2000:
+        _PC_CACHE.clear()
+    _PC_CACHE[key] = (time.time() + _PC_TTL, out)
+    return out

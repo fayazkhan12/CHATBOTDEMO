@@ -89,6 +89,21 @@ export default function Detail() {
   const rooms = live && Array.isArray(live.rooms) ? live.rooms : [];
   const room = rooms.find((r) => r.recommendation_id === pickedRoom) || rooms[0] || null;
 
+  // the booking price of the chosen room, from the DestinoWay website's own price check (supplier asked again, the website's coupon)
+  const [checks, setChecks] = useState({});
+  const roomId = room ? room.recommendation_id : "";
+  useEffect(() => {
+    if (!item || !roomId || item.mode !== "LIVE" || !item.search_id || checks[roomId]) return undefined;
+    let stale = false;
+    setChecks((c) => ({ ...c, [roomId]: { state: "loading" } }));
+    http.post("/hotels/price-check", { search_id: item.search_id, hotel_id: hotelIdOf(item), recommendation_id: roomId }, { timeout: 40000 })
+      .then(({ data }) => { if (!stale) setChecks((c) => ({ ...c, [roomId]: data && data.available ? { state: "ok", ...data.price } : { state: "off", reason: data && data.reason } })); })
+      .catch(() => { if (!stale) setChecks((c) => ({ ...c, [roomId]: { state: "off", reason: "unavailable" } })); });
+    return () => { stale = true; };
+  }, [item, roomId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const check = roomId ? checks[roomId] : null;
+  const checked = check && check.state === "ok" ? check : null;
+
   const photos = useMemo(() => {
     const out = [];
     const seen = new Set();
@@ -125,8 +140,8 @@ export default function Detail() {
             ...item,
             id: room.booking_id,
             title: `${item.title} - ${room.name}`,
-            price: room.price.payable,
-            price_token: room.price_token,
+            price: checked && checked.price_token ? checked.total : room.price.payable,
+            price_token: checked && checked.price_token ? checked.price_token : room.price_token,
             recommendation_id: room.recommendation_id,
             room_name: room.name,
             cancellation: room.cancellation,
@@ -180,7 +195,7 @@ export default function Detail() {
   const nights = Number(item.nights) || (live && Number(live.nights)) || 0;
   const guests = Number(item.guests) || 0;
   const guestText = isHotel ? guestLine(item) : "";
-  const shownPrice = room ? room.price.payable : Math.round((Number(item.price) || 0) * 100) / 100;
+  const shownPrice = checked ? checked.total : room ? room.price.payable : Math.round((Number(item.price) || 0) * 100) / 100;
   const hero = photos.length ? photos[Math.min(photo, photos.length - 1)] : null;
   const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : "Reserve now";
   const reserveOff = booking || liveState === "loading" || liveState === "expired";
@@ -407,7 +422,24 @@ export default function Detail() {
           <h4>Total price</h4>
           <div className="booking-price" data-testid="booking-price">{money(shownPrice)}</div>
           <div style={{color:'var(--muted)',fontSize:12,marginBottom:16}}>Taxes &amp; fees included &middot; {item.currency}</div>
-          {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">You save {money(room.price.savings)} (was {money(room.price.before_coupon)})</div> : null}
+          {checked ? (
+            <div className="dl-breakup" data-testid="price-breakup">
+              <div className="dl-save" style={{marginBottom:8}}>Booking price, the same as on destinoway.com</div>
+              {checked.base ? <div className="booking-row"><span>Base price</span><span>{money(checked.base)}</span></div> : null}
+              {checked.service_tax ? <div className="booking-row"><span>Platform &amp; service tax</span><span>{money(checked.service_tax)}</span></div> : null}
+              {checked.before_coupon ? <div className="booking-row"><span>Price before coupon</span><span><s>{money(checked.before_coupon)}</s></span></div> : null}
+              {checked.coupon ? <div className="booking-row" style={{color:'var(--ok, #15803d)'}}><span>Coupon {checked.coupon}</span><span>−{money(checked.coupon_discount)}</span></div> : null}
+            </div>
+          ) : (
+            <>
+              {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">You save {money(room.price.savings)} (was {money(room.price.before_coupon)})</div> : null}
+              {isLiveHotel && room ? (
+                <div style={{color:'var(--muted)',fontSize:12,margin:'6px 0 10px'}} data-testid="price-note">
+                  {check && check.state === "loading" ? "Checking the booking price…" : "Final price and coupon are confirmed when you book on destinoway.com."}
+                </div>
+              ) : null}
+            </>
+          )}
           {room && <div className="booking-row"><span>Room</span><span className="dl-row-val">{room.name}</span></div>}
           {stay ? <div className="booking-row"><span className="dl-row-label"><CalendarDays size={13}/>{isHotel ? "Stay" : "Date"}</span><span>{stay}</span></div> : null}
           {isHotel && nights > 0 ? <div className="booking-row"><span>Length</span><span>{plural(nights, "night")}</span></div> : null}
