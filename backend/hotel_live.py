@@ -310,7 +310,7 @@ def _price(p: Any, nights: Optional[int]) -> Optional[Dict[str, Any]]:
     if not total:
         return None
     before = _money(p.get("totalPriceBeforeCoupon"))
-    out: Dict[str, Any] = {"total": total, "payable": _rupees(total), "currency": str(p.get("currency") or "INR")[:3]}
+    out: Dict[str, Any] = {"total": total, "payable": total, "currency": str(p.get("currency") or "INR")[:3]}   # to the paisa, as the website
     if before and before > total + 0.5:
         out["before_coupon"] = before
         out["savings"] = round(before - total, 2)

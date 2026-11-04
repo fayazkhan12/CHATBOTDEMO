@@ -9,7 +9,7 @@ import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { perNightLine } from "../lib/format";
+import { perNightLine, money } from "../lib/format";
 import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
@@ -59,7 +59,7 @@ const QUICK_STARTERS = [
   { label: "Order milk and bread", icon: ShoppingBag },
 ];
 
-const INR = (n) => `₹${Math.round(Number(n) || 0).toLocaleString("en-IN")}`;
+const INR = (n) => money(n);
 
 // The fares for a ride the visitor asked for in the chat. Tapping a vehicle opens the ride screen with it chosen.
 function RideQuote({ ride, onOpen }) {
@@ -168,7 +168,7 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onR
                 <small>{card.brand}</small>
                 {perNightLine(card) ? <small data-testid="per-night">{perNightLine(card)}</small> : null}
                 <div className="inline-footer">
-                  <strong>₹{Math.round(Number(card.price) || 0).toLocaleString("en-IN")}</strong>
+                  <strong>{money(card.price)}</strong>
                   <button className="inline-cta" data-testid={`inline-book-${card.id}`}>View <ArrowRight size={12}/></button>
                 </div>
               </div>

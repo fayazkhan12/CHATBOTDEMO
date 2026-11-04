@@ -91,7 +91,7 @@ export default function Checkout() {
       if (!loaded) { toast.error("Could not load payment gateway."); setPaying(false); return; }
       const options = {
         key: order.razorpay_key_id,
-        amount: order.amount_rupees * 100,
+        amount: Math.round(order.amount_rupees * 100),
         currency: "INR",
         name: "DestinoWay",
         description: `Booking ${bid}`,

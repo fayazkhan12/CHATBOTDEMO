@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import math
+from decimal import Decimal, ROUND_HALF_UP
 import os
 import re
 import time
@@ -256,7 +257,7 @@ class TripSaveIn(BaseModel):
 class BookingIn(BaseModel):
     item: Dict[str, Any]
     traveller: Dict[str, Any]
-    amount_rupees: int = Field(gt=0, le=10_000_000)
+    amount_rupees: float = Field(gt=0, le=10_000_000)   # to the paisa
     service: str = Field(max_length=20)
 
 
@@ -565,7 +566,7 @@ def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = Non
         "rating": rating,                 # the guests' rating only; 0 when the hotel has none (no star rating shown as a rating)
         "review_count": review_count,
         "location": h.get("address") or "",
-        "price": float(math.floor(float(price.get("totalPrice") or 0) + 0.5)),  # whole rupees, rounded like the room prices
+        "price": round(float(price.get("totalPrice") or 0), 2),  # exact to the paisa, the same as the company website shows
         "currency": price.get("currency") or "INR",
         "image": h.get("heroImage") or first_img or "",   # no photo from the supplier: the app shows a plain placeholder, never a stock photo
         "amenities": [f.get("name") for f in (h.get("facilities") or []) if f.get("name")][:5],
@@ -1031,7 +1032,7 @@ async def travel_search(req: SearchRequest, request: Request):
         note = live_note or cmem.fixed("hotels_unavailable", req.lang or "en")
     for r in results:
         if isinstance(r.get("id"), str) and isinstance(r.get("price"), (int, float)) and r["price"] > 0:
-            r["price_token"] = _price_token(r["id"], round(r["price"]))
+            r["price_token"] = _price_token(r["id"], r["price"])
     return {
         "status": "success", "mode": mode, "service": req.service,
         "results": results, "note": note, "area": req.area if req.service == "hotels" else None,
@@ -1044,16 +1045,21 @@ async def travel_search(req: SearchRequest, request: Request):
 _PRICE_TTL = 3 * 3600
 
 
-def _price_token(item_id: str, price: int) -> str:
-    """Signed proof of the price WE showed for this item. The browser cannot change it."""
+def _paise_round(v: Any) -> float:
+    """A rupee amount to the paisa (900.535 -> 900.54), the way the company website shows it."""
+    return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _price_token(item_id: str, price: float) -> str:
+    """Signed proof of the price WE showed for this item (to the paisa). The browser cannot change it."""
     import base64
     import json as _json
-    payload = _json.dumps([item_id, int(price), int(time.time()) + _PRICE_TTL], separators=(",", ":")).encode()
+    payload = _json.dumps([item_id, _paise_round(price), int(time.time()) + _PRICE_TTL], separators=(",", ":")).encode()
     sig = hmac.new(JWT_SECRET.encode(), payload, hashlib.sha256).hexdigest()[:40]
     return base64.urlsafe_b64encode(payload).decode().rstrip("=") + "." + sig
 
 
-def _price_from_token(token: Any, item_id: str) -> Optional[int]:
+def _price_from_token(token: Any, item_id: str) -> Optional[float]:
     import base64
     import json as _json
     try:
@@ -1065,7 +1071,7 @@ def _price_from_token(token: Any, item_id: str) -> Optional[int]:
         tid, price, exp = _json.loads(payload)
         if tid != item_id or exp < time.time() or not (0 < price <= 10_000_000):
             return None
-        return int(price)
+        return _paise_round(price)
     except Exception:
         return None
 
@@ -1331,12 +1337,12 @@ def _present_booking(doc: Dict[str, Any]) -> Dict[str, Any]:
     return doc
 
 
-async def _razorpay_order(booking_id: str, amount: int, service: str) -> Optional[Dict[str, Any]]:
+async def _razorpay_order(booking_id: str, amount: float, service: str) -> Optional[Dict[str, Any]]:
     if not razorpay_client:
         return None
     try:
         return await asyncio.to_thread(razorpay_client.order.create, {
-            "amount": amount * 100,
+            "amount": int(round(_paise_round(amount) * 100)),     # Razorpay takes paise
             "currency": "INR",
             "receipt": booking_id,
             "notes": {"booking_id": booking_id, "service": service},

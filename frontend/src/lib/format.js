@@ -2,8 +2,13 @@
 
 const RUPEE = "\u20b9";
 
-// 1462.4 -> "\u20b91,462" (whole rupees; the same rounding the server uses for room prices)
-export const money = (n) => RUPEE + Math.floor((Number(n) || 0) + 0.5).toLocaleString("en-IN");
+// 900.54 -> "\u20b9900.54", 1462 -> "\u20b91,462": hotel prices to the paisa, exactly as the company website shows them;
+// whole amounts (rides, groceries, flights) without ".00"
+export const money = (n) => {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  const whole = Math.abs(v - Math.round(v)) < 0.005;
+  return RUPEE + v.toLocaleString("en-IN", whole ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 // "2026-11-10" or "2026-11-10T06:20:00" -> "10 Nov"; anything else -> ""
 export function shortDate(iso) {

@@ -135,7 +135,7 @@ export default function Detail() {
       const { data } = await http.post("/bookings", {
         item: chosen,
         traveller: { name: user.name, email: user.email, contact: user.contact || "" },
-        amount_rupees: Math.round(chosen.price),
+        amount_rupees: Math.round(Number(chosen.price) * 100) / 100,
         service: item.type || "hotel",
       });
       navigate(`/checkout/${data.booking_id}`);
@@ -178,7 +178,7 @@ export default function Detail() {
   const nights = Number(item.nights) || (live && Number(live.nights)) || 0;
   const guests = Number(item.guests) || 0;
   const guestText = isHotel ? guestLine(item) : "";
-  const shownPrice = room ? room.price.payable : Math.round(Number(item.price) || 0);
+  const shownPrice = room ? room.price.payable : Math.round((Number(item.price) || 0) * 100) / 100;
   const hero = photos.length ? photos[Math.min(photo, photos.length - 1)] : null;
   const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : "Reserve now";
   const reserveOff = booking || liveState === "loading" || liveState === "expired";
