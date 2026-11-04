@@ -9,7 +9,7 @@ import { useAuth } from "../lib/auth";
 import { noteSelection, selectionFromItem } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
 import { money, shortDate, clockTime, dateRange, plural, guestLine } from "../lib/format";
-import { companyBookingUrl, companyHotelUrl } from "../lib/company";
+import { companyHotelUrl } from "../lib/company";
 
 // hotel ids on the website look like ak-<supplierHotelId>
 function hotelIdOf(item) {
@@ -186,7 +186,9 @@ export default function Detail() {
   const type = item.type || "hotel";
   const isHotel = type === "hotel";
   const isDemo = item.mode !== "LIVE";
-  const siteUrl = isHotel ? (companyBookingUrl(item, hotelIdOf(item), room) || companyHotelUrl(item, hotelIdOf(item))) : "";
+  // the website's hotel page for the SAME search (same prices, to the paisa). Not its booking page: that one fails without a
+  // website login ("No token provided"); from the hotel page the website asks for its own login when the visitor books.
+  const siteUrl = isHotel ? companyHotelUrl(item, hotelIdOf(item)) : "";
   const isLiveHotel = isHotel && !isDemo;
 
   const amenities = isHotel
@@ -466,10 +468,10 @@ export default function Detail() {
           {siteUrl && (
             <a className="btn-ghost dl-site-cta" href={siteUrl} target="_blank" rel="noopener noreferrer" data-testid="book-on-site"
                style={{display:'block',width:'100%',marginTop:12,padding:'12px',textAlign:'center',boxSizing:'border-box'}}>
-              {room ? "Book this room on destinoway.com" : "Open on destinoway.com"}
+              Book on destinoway.com
             </a>
           )}
-          {siteUrl && <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:6,lineHeight:1.5}}>Opens the same {room ? "room" : "hotel"} on the DestinoWay website, where the booking is made.</p>}
+          {siteUrl && <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:6,lineHeight:1.5}}>Opens this hotel on the DestinoWay website with the same dates, rooms and prices.</p>}
           {isHotel && (
             <button className="btn-ghost detail-ride-cta" style={{width:'100%',marginTop:12}} onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel">
               <Car size={14}/> Book a ride to this hotel
