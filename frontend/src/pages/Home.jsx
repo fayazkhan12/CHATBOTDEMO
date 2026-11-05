@@ -9,6 +9,7 @@ import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
+import { detailUrl } from "../lib/company";
 import { perNightLine, money } from "../lib/format";
 import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
 
@@ -239,11 +240,11 @@ export default function Home() {
     firstScroll.current = false;
   }, [messages]);
 
-  const openCard = (card) => {
-    http.post("/travel/cache", [card]).catch(() => {});
+  const openCard = async (card) => {
+    await http.post("/travel/cache", [card]).catch(() => {});   // the details page reads this copy, so it must be saved first
     const service = card.type === "flight" ? "flights" : card.type === "hotel" ? "hotels" : card.type === "bus" ? "buses" : "cabs";
     noteSelection(selectionFromItem(card, "viewed"));
-    navigate(`/detail/${service}/${encodeURIComponent(card.id)}`);
+    navigate(detailUrl(service, card));
   };
 
   openCardRef.current = openCard;

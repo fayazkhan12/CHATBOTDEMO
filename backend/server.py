@@ -1077,7 +1077,10 @@ async def otp_verify(body: OtpVerifyIn, request: Request):
 
 @api.get("/auth/me")
 async def me(user=Depends(current_user)):
-    return user
+    # `company` holds the visitor's stored DestinoWay login tokens: the server needs them, the browser never does
+    public = {k: v for k, v in user.items() if k != "company"}
+    public["company_linked"] = bool(user.get("company"))
+    return public
 
 
 @api.post("/auth/logout")
@@ -1205,15 +1208,23 @@ _MEM_ITEMS: Dict[str, Any] = {}   # id -> (expiry, item); fallback when MongoDB 
 _MEM_TTL = 6 * 3600
 
 
+def _offer_key(item_id: Any, search_id: Any = "") -> str:
+    """The same hotel can be open in several searches with other dates and prices, so a live offer is kept per search."""
+    return f"{item_id}|{search_id}" if search_id else str(item_id)
+
+
 @api.get("/travel/detail/{item_id}")
-async def travel_detail(item_id: str):
+async def travel_detail(item_id: str, sid: str = Query("", max_length=64)):
     if len(item_id) > 100:
         raise HTTPException(status_code=404, detail="Item not found. Please search again.")
-    cached = _MEM_ITEMS.get(str(item_id))
+    cached = _MEM_ITEMS.get(_offer_key(item_id, sid))
     if cached and cached[0] > time.time():
         return cached[1]
+    query: Dict[str, Any] = {"id": str(item_id)}
+    if sid:
+        query["search_id"] = sid
     try:
-        cached_db = await db.search_items.find_one({"id": str(item_id)}, {"_id": 0})
+        cached_db = await db.search_items.find_one(query, {"_id": 0})
     except Exception:
         cached_db = None
     if cached_db:
@@ -1261,11 +1272,13 @@ async def cache_items(items: List[Dict[str, Any]], request: Request):
             _MEM_ITEMS.pop(next(iter(_MEM_ITEMS)), None)
     safes = [x for x in (_safe_item(it) for it in items) if x]
     for safe in safes:  # always works, even with MongoDB down
-        _MEM_ITEMS[safe["id"]] = (now + _MEM_TTL, safe)
+        _MEM_ITEMS[_offer_key(safe["id"])] = (now + _MEM_TTL, safe)      # an old link without a search id opens the latest offer
+        if safe.get("search_id"):
+            _MEM_ITEMS[_offer_key(safe["id"], safe["search_id"])] = (now + _MEM_TTL, safe)
         saved += 1
     try:
         for safe in safes:
-            await db.search_items.update_one({"id": safe["id"]}, {"$set": safe}, upsert=True)
+            await db.search_items.update_one({"id": safe["id"], "search_id": safe.get("search_id")}, {"$set": safe}, upsert=True)
     except Exception as exc:
         logger.warning("db cache skipped (memory copy kept): %s", type(exc).__name__)
     return {"ok": True, "count": saved}

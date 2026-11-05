@@ -16,11 +16,11 @@ a { color: inherit; text-decoration: none; }
   backdrop-filter: blur(18px);
   border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 11px; font-weight: 800; letter-spacing: -0.04em; font-size: 22px; font-family: 'Jost', sans-serif; font-style: normal; }
+.brand { display: flex; align-items: center; flex-shrink: 0; white-space: nowrap; gap: 11px; font-weight: 800; letter-spacing: -0.04em; font-size: 22px; font-family: 'Jost', sans-serif; font-style: normal; }
 .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; background: linear-gradient(135deg, var(--teal), #BA611E); color: #05144B; border-radius: 10px; }
 .brand-accent { color: var(--teal); font-style: normal; }
-.nav-links { display: flex; gap: 24px; }
-.nav-link { color: var(--muted); font-size: 13px; font-weight: 500; transition: color .25s; }
+.nav-links { display: flex; align-items: center; gap: clamp(14px, 2vw, 24px); margin: 0 16px; }
+.nav-link { color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; transition: color .25s; }
 .nav-link:hover, .nav-link.active { color: var(--text); }
 .top-actions { display: flex; align-items: center; gap: 14px; }
 .btn-ghost, .btn-primary {
@@ -408,7 +408,6 @@ a { color: inherit; text-decoration: none; }
   .result-price-col { grid-column: 2; align-items: flex-start; text-align: left; }
 }
 @media (max-width: 640px) {
-  .nav-links { display: none; }
   .hero { min-height: 500px; padding: 60px 20px 40px; }
   .search-card { margin-top: -40px; }
   .search-fields { grid-template-columns: 1fr; }
@@ -503,6 +502,19 @@ a { color: inherit; text-decoration: none; }
 .dl-facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
 .dl-facts dd { margin: 2px 0 0; font-size: 14px; }
 .dl-mobile-bar { display: none; }
+.detail-hero { position: relative; }
+.dl-photo-count { position: absolute; right: 14px; bottom: 14px; padding: 9px 14px; border: 0; border-radius: 999px; background: rgba(5, 20, 75, .78); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.dl-photo-count:hover { background: rgba(5, 20, 75, .92); }
+.dl-stars { display: flex; gap: 2px; margin: -4px 0 8px; color: var(--gold); }
+.dl-stars svg { fill: var(--gold); }
+.dl-viewer { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 16px; background: rgba(5, 12, 40, .92); }
+.dl-viewer figure { margin: 0; min-width: 0; text-align: center; color: #fff; font-size: 13px; }
+.dl-viewer img { max-width: 100%; max-height: 80vh; margin: 0 auto 10px; border-radius: 12px; object-fit: contain; }
+.dl-viewer-close, .dl-viewer-nav { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 auto; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .14); color: #fff; cursor: pointer; }
+.dl-viewer-close { position: absolute; top: 14px; right: 14px; }
+.dl-viewer-nav:disabled { opacity: .3; cursor: default; }
+.dl-price-off { margin: 6px 0 12px; padding: 10px 12px; border-radius: 10px; background: rgba(232, 130, 12, .1); color: var(--text); font-size: 12px; line-height: 1.5; }
+.dl-price-retry { display: block; margin-top: 4px; padding: 0; border: 0; background: none; color: var(--teal); font-weight: 700; cursor: pointer; text-decoration: underline; }
 .show-more-row { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 22px 0 6px; color: var(--muted); }
 .booking-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .booking-status.payment_failed { background: rgba(217, 45, 32, .12); color: var(--red); }
@@ -560,6 +572,15 @@ a { color: inherit; text-decoration: none; }
   .dl-stop strong { font-size: 20px; }
   .booking-card { grid-template-columns: 1fr; }
   .booking-actions { justify-content: flex-start; }
+}
+/* the logo, the links and the account buttons do not fit on one line below this width */
+@media (max-width: 860px) {
+  .topbar { flex-wrap: wrap; row-gap: 10px; }
+  .nav-links { order: 3; flex: 1 0 100%; justify-content: space-between; margin: 0; overflow-x: auto; }
+}
+@media (max-width: 520px) {
+  .dl-viewer { padding: 8px; gap: 4px; }
+  .dl-viewer-nav { width: 36px; height: 36px; }
 }
 @media (max-width: 380px) {
   .topbar { padding: 12px 12px; }

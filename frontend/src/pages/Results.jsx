@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import SearchBar from "../components/SearchBar";
 import ResultCard from "../components/ResultCard";
 import { http } from "../lib/api";
+import { detailUrl } from "../lib/company";
 import { money, shortDate, dateRange, dayFromNow, guestLine, readOccupancy } from "../lib/format";
 import { rideUrl } from "../lib/rides";
 
@@ -96,7 +97,7 @@ export default function Results() {
 
   const open = (item) => {
     const svc = data.service || "hotels";
-    navigate(`/detail/${svc}/${encodeURIComponent(item.id)}`);
+    navigate(detailUrl(svc, item));
   };
 
   const prices = data.results.map((r) => Number(r.price) || 0).filter((p) => p > 0);

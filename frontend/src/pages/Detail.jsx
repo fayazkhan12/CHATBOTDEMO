@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useVoiceDock, markVoiceFlow, takeReserveFlow } from "../lib/useVoiceDock";
 import { isReserveIntent, isBackIntent } from "../lib/voicecmd";
-import { ArrowLeft, Car, Check, Clock3, Hotel, MapPin, Star, Users, CalendarDays } from "lucide-react";
+import { ArrowLeft, Car, Check, ChevronLeft, ChevronRight, Clock3, Hotel, MapPin, Star, Users, CalendarDays, X } from "lucide-react";
 import { toast } from "sonner";
 import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -25,6 +25,8 @@ export default function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [query] = useSearchParams();
+  const searchId = query.get("sid") || "";
   const { user } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +36,7 @@ export default function Detail() {
   const [liveState, setLiveState] = useState("idle"); // idle | loading | ready | failed | expired
   const [pickedRoom, setPickedRoom] = useState(null);
   const [photo, setPhoto] = useState(0);
+  const [viewer, setViewer] = useState(false);
   const [brokenPhotos, setBrokenPhotos] = useState({});
 
   // opened from a shared link or a new tab? then there is no page to go back to
@@ -43,11 +46,11 @@ export default function Detail() {
   };
 
   useEffect(() => {
-    http.get(`/travel/detail/${encodeURIComponent(id)}`)
+    http.get(`/travel/detail/${encodeURIComponent(id)}`, { params: searchId ? { sid: searchId } : undefined })
       .then(({ data }) => setItem(data))
       .catch(() => toast.error("This option is no longer available. Please search again."))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, searchId]);
 
   // the chat remembers which hotel the visitor is looking at ("which one is nearest to the airport?", "a cab to my hotel")
   useEffect(() => { if (item) noteSelection(selectionFromItem(item, "viewed")); }, [item]);
@@ -91,18 +94,26 @@ export default function Detail() {
 
   // the booking price of the chosen room, from the DestinoWay website's own price check (supplier asked again, the website's coupon)
   const [checks, setChecks] = useState({});
+  const [checkTry, setCheckTry] = useState(0);
   const roomId = room ? room.recommendation_id : "";
   useEffect(() => {
-    if (!item || !roomId || item.mode !== "LIVE" || !item.search_id || (checks[roomId] && checks[roomId].reason !== "login")) return undefined;
-    let stale = false;
+    if (!item || !roomId || item.mode !== "LIVE" || !item.search_id || (checks[roomId] && checks[roomId].reason !== "login")) return;
+    // the answer is saved per room, so it stays right even if the visitor has picked another room meanwhile
     setChecks((c) => ({ ...c, [roomId]: { state: "loading" } }));
     http.post("/hotels/price-check", { search_id: item.search_id, hotel_id: hotelIdOf(item), recommendation_id: roomId }, { timeout: 40000 })
-      .then(({ data }) => { if (!stale) setChecks((c) => ({ ...c, [roomId]: data && data.available ? { state: "ok", ...data.price } : { state: "off", reason: data && data.reason } })); })
-      .catch(() => { if (!stale) setChecks((c) => ({ ...c, [roomId]: { state: "off", reason: "unavailable" } })); });
-    return () => { stale = true; };
-  }, [item, roomId, user]); // eslint-disable-line react-hooks/exhaustive-deps
+      .then(({ data }) => setChecks((c) => ({ ...c, [roomId]: data && data.available ? { state: "ok", ...data.price } : { state: "off", reason: data && data.reason } })))
+      .catch(() => setChecks((c) => ({ ...c, [roomId]: { state: "off", reason: "unavailable" } })));
+  }, [item, roomId, user, checkTry]); // eslint-disable-line react-hooks/exhaustive-deps
+  const retryCheck = () => {
+    setChecks((c) => { const next = { ...c }; delete next[roomId]; return next; });
+    setCheckTry((n) => n + 1);
+  };
   const check = roomId ? checks[roomId] : null;
   const checked = check && check.state === "ok" ? check : null;
+  const checking = !!check && check.state === "loading";
+  const checkExpired = !!check && check.state === "off" && check.reason === "expired";
+  // a live room whose price the website's price check has not confirmed: the coupon inside it may not apply to this visitor
+  const priceUnconfirmed = !!room && !!check && check.state === "off";
 
   const photos = useMemo(() => {
     const out = [];
@@ -121,15 +132,15 @@ export default function Detail() {
   const book = async () => {
     if (!user) {
       toast.info("Please log in to continue to checkout.");
-      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
       return;
     }
-    if (liveState === "expired") {
+    if (liveState === "expired" || checkExpired) {
       toast.error("These live prices have expired. Please go back and search again.");
       return;
     }
-    if (liveState === "loading") {
-      toast.info("Loading the room options. One moment.");
+    if (liveState === "loading" || checking) {
+      toast.info("Checking the room and its price. One moment.");
       return;
     }
     setBooking(true);
@@ -164,10 +175,22 @@ export default function Detail() {
   };
 
   useEffect(() => {
-    if (!item || liveState === "idle" || liveState === "loading") return;
+    if (!item || liveState === "idle" || liveState === "loading" || checking) return;
     if (takeReserveFlow()) { markVoiceFlow(); book(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item, liveState]);
+  }, [item, liveState, checking]);
+
+  // the photo viewer: Esc closes it, the arrow keys move through the photos
+  useEffect(() => {
+    if (!viewer) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setViewer(false);
+      else if (e.key === "ArrowRight") setPhoto((i) => Math.min(photos.length - 1, i + 1));
+      else if (e.key === "ArrowLeft") setPhoto((i) => Math.max(0, i - 1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewer, photos.length]);
 
   useVoiceDock({
     maxTurns: 5,
@@ -199,8 +222,9 @@ export default function Detail() {
   const guestText = isHotel ? guestLine(item) : "";
   const shownPrice = checked ? checked.total : room ? room.price.payable : Math.round((Number(item.price) || 0) * 100) / 100;
   const hero = photos.length ? photos[Math.min(photo, photos.length - 1)] : null;
-  const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : "Reserve now";
-  const reserveOff = booking || liveState === "loading" || liveState === "expired";
+  const reserveLabel = booking ? "Preparing…" : liveState === "loading" ? "Loading rooms…" : checking ? "Checking price…" : "Reserve now";
+  const reserveOff = booking || liveState === "loading" || liveState === "expired" || checking || checkExpired;
+  const stars = isHotel ? Number((content && content.star_rating) || item.stars) || 0 : 0;
 
   const address = (content && content.address) || item.location;
   // where a ride to this hotel should end (the hotel's own coordinates when the supplier gave them)
@@ -214,7 +238,7 @@ export default function Detail() {
   // hotels: the stay; flights, buses and cabs: the travel day
   const tripDay = shortDate(item.check_in || item.departure);
   const stay = isHotel ? dateRange(item.check_in, item.check_out) : tripDay;
-  const priceNote = isHotel && nights ? `${plural(nights, "night")} total` : "per booking";
+  const priceNote = `${isHotel && nights ? `${plural(nights, "night")} total` : "per booking"}${priceUnconfirmed ? " · estimate" : ""}`;
 
   // flight / bus / cab summary
   const dep = clockTime(item.departure);
@@ -237,6 +261,9 @@ export default function Detail() {
       {hero && (
         <div className={isHotel ? "detail-hero" : "detail-hero dl-hero-flat"}>
           <img src={hero.url} alt={isHotel ? (hero.caption || item.title) : ""} onError={() => setBrokenPhotos((b) => ({ ...b, [hero.url]: true }))}/>
+          {isHotel && photos.length > 1 && (
+            <button type="button" className="dl-photo-count" onClick={() => setViewer(true)} data-testid="all-photos">View all {photos.length} photos</button>
+          )}
         </div>
       )}
       {!hero && isHotel && liveState !== "loading" && liveState !== "idle" && (
@@ -247,12 +274,12 @@ export default function Detail() {
       )}
       {photos.length > 1 && (
         <div className="dl-thumbs" data-testid="photo-strip">
-          {photos.slice(0, 12).map((p, i) => (
+          {photos.map((p, i) => (
             <button
               type="button"
               key={p.url}
               className="dl-thumb"
-              aria-label={`Show picture ${i + 1} of ${Math.min(photos.length, 12)}`}
+              aria-label={`Show picture ${i + 1} of ${photos.length}`}
               aria-current={i === Math.min(photo, photos.length - 1) ? "true" : undefined}
               onClick={() => setPhoto(i)}
             >
@@ -261,10 +288,24 @@ export default function Detail() {
           ))}
         </div>
       )}
+      {viewer && hero && (
+        <div className="dl-viewer" role="dialog" aria-modal="true" aria-label="Hotel photos" onClick={() => setViewer(false)} data-testid="photo-viewer">
+          <button type="button" className="dl-viewer-close" aria-label="Close photos" onClick={() => setViewer(false)}><X size={22}/></button>
+          <button type="button" className="dl-viewer-nav dl-viewer-prev" aria-label="Previous photo" disabled={photo <= 0}
+                  onClick={(e) => { e.stopPropagation(); setPhoto((i) => Math.max(0, i - 1)); }}><ChevronLeft size={26}/></button>
+          <figure onClick={(e) => e.stopPropagation()}>
+            <img src={hero.url} alt={hero.caption || item.title}/>
+            <figcaption>{Math.min(photo, photos.length - 1) + 1} of {photos.length}{hero.caption ? ` · ${hero.caption}` : ""}</figcaption>
+          </figure>
+          <button type="button" className="dl-viewer-nav dl-viewer-next" aria-label="Next photo" disabled={photo >= photos.length - 1}
+                  onClick={(e) => { e.stopPropagation(); setPhoto((i) => Math.min(photos.length - 1, i + 1)); }}><ChevronRight size={26}/></button>
+        </div>
+      )}
       <div className="detail-grid">
         <div className="detail-body">
           <span className={isDemo ? "badge-demo" : "badge-live"}>{isDemo ? "DEMO" : "LIVE"}</span>
           <h1 data-testid="detail-title">{item.title}</h1>
+          {stars > 0 && <div className="dl-stars" role="img" aria-label={`${stars} star hotel`}>{Array.from({ length: stars }, (_, i) => <Star key={i} size={15}/>)}</div>}
           <div className="detail-brand">{item.brand}</div>
           <div className="dl-meta">
             {address && <span><MapPin size={14}/> {address}</span>}
@@ -421,7 +462,7 @@ export default function Detail() {
         </div>
 
         <aside className="booking-sticky" data-testid="booking-card">
-          <h4>Total price</h4>
+          <h4>{priceUnconfirmed ? "Estimated price" : "Total price"}</h4>
           <div className="booking-price" data-testid="booking-price">{money(shownPrice)}</div>
           <div style={{color:'var(--muted)',fontSize:12,marginBottom:16}}>Taxes &amp; fees included &middot; {item.currency}</div>
           {checked ? (
@@ -434,13 +475,22 @@ export default function Detail() {
             </div>
           ) : (
             <>
-              {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">You save {money(room.price.savings)} (was {money(room.price.before_coupon)})</div> : null}
+              {room && room.price.before_coupon ? <div className="dl-save" data-testid="booking-save">{priceUnconfirmed ? `Includes an offer of ${money(room.price.savings)} (was ${money(room.price.before_coupon)})` : `You save ${money(room.price.savings)} (was ${money(room.price.before_coupon)})`}</div> : null}
+              {checkExpired ? (
+                <div className="dl-price-off" role="alert" data-testid="price-expired">This price has expired. Please go back and search again.</div>
+              ) : null}
+              {priceUnconfirmed && !checkExpired && check && check.state === "off" && check.reason !== "login" ? (
+                <div className="dl-price-off" role="status" data-testid="price-unconfirmed">
+                  We could not confirm this price yet, so the offer may not apply to your account.
+                  <button type="button" className="dl-price-retry" onClick={retryCheck} data-testid="price-retry">Try again</button>
+                </div>
+              ) : null}
               {isLiveHotel && room && check && check.state === "loading" ? (
                 <div style={{color:'var(--muted)',fontSize:12,margin:'6px 0 10px'}} data-testid="price-note">Checking the booking price…</div>
               ) : null}
               {isLiveHotel && room && check && check.state === "off" && check.reason === "login" ? (
                 <button type="button" className="btn-ghost" style={{width:'100%',margin:'6px 0 10px'}} data-testid="price-login"
-                        onClick={() => navigate(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)}>
+                        onClick={() => navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`)}>
                   Log in with your DestinoWay account to see your booking price
                 </button>
               ) : null}
@@ -452,7 +502,7 @@ export default function Detail() {
           {isHotel
             ? (guestText ? <div className="booking-row" data-testid="booking-guests"><span className="dl-row-label"><Users size={13}/>Guests</span><span className="dl-row-val">{guestText}</span></div> : null)
             : (guests > 0 ? <div className="booking-row"><span className="dl-row-label"><Users size={13}/>Travellers</span><span>{guests}</span></div> : null)}
-          <div className="booking-row"><span>Total</span><span>{money(shownPrice)}</span></div>
+          <div className="booking-row"><span>{priceUnconfirmed ? "Estimated total" : "Total"}</span><span>{money(shownPrice)}</span></div>
           <button
             className="btn-primary"
             style={{width:'100%',padding:'14px',marginTop:16,fontSize:15}}
@@ -471,7 +521,7 @@ export default function Detail() {
               Book on destinoway.com
             </a>
           )}
-          {siteUrl && <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:6,lineHeight:1.5}}>Opens this hotel on the DestinoWay website with the same dates, rooms and prices.</p>}
+          {siteUrl && <p style={{color:'var(--muted)',fontSize:11,textAlign:'center',marginTop:6,lineHeight:1.5}}>Opens this hotel on the DestinoWay website for the same search.</p>}
           {isHotel && (
             <button className="btn-ghost detail-ride-cta" style={{width:'100%',marginTop:12}} onClick={() => navigate(rideUrl({ drop: hotelPlace }))} data-testid="ride-to-hotel">
               <Car size={14}/> Book a ride to this hotel

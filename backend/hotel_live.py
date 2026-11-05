@@ -167,7 +167,7 @@ def _find_hotel(payload: Any) -> Dict[str, Any]:
     return {}
 
 
-def _images(h: Dict[str, Any], limit: int = 12) -> List[Dict[str, str]]:
+def _images(h: Dict[str, Any], limit: int = 30) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     seen = set()
     hero = _url(h.get("heroImage"))
@@ -657,13 +657,16 @@ async def hotel_price_check(request: Request, body: Dict[str, Any]):
     if r is None or r.status_code in (400, 404, 410):
         return {"available": False, "reason": "expired"}
     if r.status_code != 200:
-        log.warning("price check http %s", r.status_code)
+        log.warning("price check http %s: %s", r.status_code, _text(r.text, 160))
         return {"available": False, "reason": "unavailable"}
     try:
-        price = clean_price_check(r.json(), f"{ITEM_PREFIX}{hid}", rid)
+        answer = r.json()
+        price = clean_price_check(answer, f"{ITEM_PREFIX}{hid}", rid)
     except ValueError:
-        price = None
+        answer, price = None, None
     if not price:
+        # a 200 without a price: the API's answer changed. Only the field names are logged, never the values.
+        log.warning("price check: no total in the answer, data keys=%s", sorted(_d(_d(answer).get("data")).keys())[:20])
         return {"available": False, "reason": "unavailable"}
     out = {"available": True, "price": price}
     if len(_PC_CACHE) > 2000:

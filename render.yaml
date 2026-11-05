@@ -16,8 +16,10 @@ services:
         value: production
       - key: DB_NAME
         value: destinoway_chatbot
+      - key: TRUST_PROXY
+        value: "1"
       - key: MONGO_URL
-        value: mongodb://localhost:27017
+        sync: false
       - key: AKBAR_API_HOST
         value: https://api-dev.destinoway.com
       - key: GEMINI_MODEL

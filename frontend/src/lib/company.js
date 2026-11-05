@@ -5,6 +5,12 @@ export const COMPANY_SITE = (process.env.REACT_APP_COMPANY_SITE || "https://dev.
 // "Hotel Holiday Home" -> "hotel-holiday-home" (the website's own address style)
 export const slug = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_-]+/g, "-").slice(0, 80) || "hotel";
 
+// the chatbot's own page for an offer. A live hotel carries its search, because the same hotel can have other dates and prices in another search.
+export function detailUrl(service, item) {
+  const sid = item && item.search_id ? `?sid=${encodeURIComponent(item.search_id)}` : "";
+  return `/detail/${service}/${encodeURIComponent(item.id)}${sid}`;
+}
+
 // the hotel's page on the website, or "" when the offer is not a live hotel from the company API
 export function companyHotelUrl(item, hotelId) {
   if (!item || item.mode !== "LIVE" || !item.search_id || !hotelId) return "";
