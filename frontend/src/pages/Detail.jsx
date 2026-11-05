@@ -112,7 +112,7 @@ export default function Detail() {
   const checked = check && check.state === "ok" ? check : null;
   const checking = !!check && check.state === "loading";
   const checkExpired = !!check && check.state === "off" && check.reason === "expired";
-  // a live room whose price the website's price check has not confirmed: the coupon inside it may not apply to this visitor
+  // a live room whose price the website's price check has not confirmed: the booking price can differ a little
   const priceUnconfirmed = !!room && !!check && check.state === "off";
 
   const photos = useMemo(() => {
@@ -481,7 +481,7 @@ export default function Detail() {
               ) : null}
               {priceUnconfirmed && !checkExpired && check && check.state === "off" && check.reason !== "login" ? (
                 <div className="dl-price-off" role="status" data-testid="price-unconfirmed">
-                  We could not confirm this price yet, so the offer may not apply to your account.
+                  We could not confirm this price yet, so the final amount may differ slightly.
                   <button type="button" className="dl-price-retry" onClick={retryCheck} data-testid="price-retry">Try again</button>
                 </div>
               ) : null}

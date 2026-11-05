@@ -47,14 +47,29 @@ def test_me_never_sends_stored_login_tokens(api):
     assert user["company"]                  # the server's own copy is untouched
 
 
-def test_price_check_uses_the_final_total_and_shows_the_coupon():
-    hl.set_signer(lambda booking_id, price: f"signed:{booking_id}:{price}")
-    payload = {"data": {"totalPayable": 1421.72, "couponDiscount": 168.25, "appliedCoupon": "06724", "currency": "INR",
+PRICE_CHECK = {"data": {"totalPayable": 1421.72, "couponDiscount": 168.25, "appliedCoupon": "06724", "currency": "INR",
                         "pricing": {"rooms": [{"roomCount": 1, "customerPrice": {"basePrice": 1346.01, "platform&servicetax": 75.71}}]}}}
-    out = hl.clean_price_check(payload, "ak-1", "room-1")
-    assert out["total"] == 1421.72
-    assert out["before_coupon"] == 1589.97
-    assert out["price_token"] == "signed:ak-1#room-1:1421.72"
+ROOM_PRICE = {"totalPrice": 1421.72, "totalPriceBeforeCoupon": 1589.97, "currency": "INR"}
+
+
+def test_dummy_coupon_is_left_out_of_every_price(monkeypatch):
+    monkeypatch.setattr(hl, "COUPONS_ON", False)
+    hl.set_signer(lambda booking_id, price: f"signed:{booking_id}:{price}")
+    assert server._total_price({"price": ROOM_PRICE}) == 1589.97
+    assert server._hotel_card({"supplierHotelId": "1", "price": ROOM_PRICE}, "Jaipur")["price"] == 1589.97
+    room = hl._price(ROOM_PRICE, 1)
+    assert room["payable"] == 1589.97 and "savings" not in room
+    checked = hl.clean_price_check(PRICE_CHECK, "ak-1", "room-1")
+    assert (checked["total"], checked["coupon"], checked["before_coupon"]) == (1589.97, None, None)
+    assert checked["price_token"] == "signed:ak-1#room-1:1589.97"
+
+
+def test_real_coupons_work_when_switched_on(monkeypatch):
+    monkeypatch.setattr(hl, "COUPONS_ON", True)
+    hl.set_signer(lambda booking_id, price: f"signed:{booking_id}:{price}")
+    assert hl._price(ROOM_PRICE, 1)["savings"] == 168.25
+    checked = hl.clean_price_check(PRICE_CHECK, "ak-1", "room-1")
+    assert (checked["total"], checked["coupon"], checked["before_coupon"]) == (1421.72, "06724", 1589.97)
 
 
 def test_price_check_without_a_total_is_not_a_price():

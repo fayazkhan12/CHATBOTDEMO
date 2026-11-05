@@ -36,6 +36,8 @@ router = APIRouter(prefix="/api")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 ITEM_PREFIX = "ak-"  # the website's hotel ids look like ak-<supplierHotelId>
+# The company API's coupons are dummy data for now, so customers see the price without them. Set HOTEL_COUPONS=1 when coupons are real.
+COUPONS_ON = os.environ.get("HOTEL_COUPONS", "").strip().lower() in ("1", "true", "yes", "on")
 
 # server.py hands us its price-signing function (see set_signer). The signed token is what lets
 # /bookings trust a room price without believing the browser.
@@ -303,13 +305,23 @@ def _free_cancel_until(group: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def list_total(p: Any) -> Optional[float]:
+    """The total a customer should see for a company API price: without the dummy coupon while coupons are off."""
+    p = _d(p)
+    total = _money(p.get("totalPrice"))
+    before = _money(p.get("totalPriceBeforeCoupon"))
+    if not COUPONS_ON and total and before and before > total:
+        return before
+    return total
+
+
 def _price(p: Any, nights: Optional[int]) -> Optional[Dict[str, Any]]:
     """Customer-facing price only. Supplier cost, markup, tax split and commission are NOT passed on."""
     p = _d(p)
-    total = _money(p.get("totalPrice"))
+    total = list_total(p)
     if not total:
         return None
-    before = _money(p.get("totalPriceBeforeCoupon"))
+    before = _money(p.get("totalPriceBeforeCoupon")) if COUPONS_ON else None
     out: Dict[str, Any] = {"total": total, "payable": total, "currency": str(p.get("currency") or "INR")[:3]}   # to the paisa, as the website
     if before and before > total + 0.5:
         out["before_coupon"] = before
@@ -604,13 +616,16 @@ def clean_price_check(payload: Any, item_id: Optional[str], recommendation_id: s
         base += (_money(cp.get("basePrice")) or 0) * n
         tax += (_money(cp.get("platform&servicetax")) or 0) * n
     discount = _money(d.get("couponDiscount")) or 0.0
+    if not COUPONS_ON:          # the dummy coupon comes off, as on the search and room prices
+        total = round(total + discount, 2)
+        discount = 0.0
     out: Dict[str, Any] = {
         "total": total, "currency": str(d.get("currency") or "INR")[:3],
         "base": round(base, 2) or None, "service_tax": round(tax, 2) or None,
-        "coupon": _text(d.get("appliedCoupon"), 30) or None, "coupon_discount": round(discount, 2) if discount else 0.0,
+        "coupon": (_text(d.get("appliedCoupon"), 30) or None) if COUPONS_ON else None, "coupon_discount": round(discount, 2) if discount else 0.0,
         "before_coupon": round(total + discount, 2) if discount else None,
         "coupons": [{"code": _text(c.get("code"), 30), "title": _text(c.get("title"), 60), "discount": _money(c.get("discount"))}
-                    for c in (_d(x) for x in _l(d.get("availableCoupons"))[:5]) if _text(c.get("code"), 30)],
+                    for c in (_d(x) for x in _l(d.get("availableCoupons"))[:5]) if COUPONS_ON and _text(c.get("code"), 30)],
     }
     booking_id = f"{item_id}#{recommendation_id}" if item_id else None
     if _SIGN and booking_id and len(booking_id) <= 100:

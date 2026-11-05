@@ -468,7 +468,7 @@ async def _resolve_area(city: str, area: str) -> Optional[Dict[str, Any]]:
 
 def _total_price(h: Dict[str, Any]) -> float:
     try:
-        return float((h.get("price") or {}).get("totalPrice") or 0)
+        return float(_hotel_live.list_total(h.get("price")) or 0)
     except (TypeError, ValueError):
         return 0.0
 
@@ -566,7 +566,7 @@ def _hotel_card(h: Dict[str, Any], city: str, distance_km: Optional[float] = Non
         "rating": rating,                 # the guests' rating only; 0 when the hotel has none (no star rating shown as a rating)
         "review_count": review_count,
         "location": h.get("address") or "",
-        "price": round(float(price.get("totalPrice") or 0), 2),  # exact to the paisa, the same as the company website shows
+        "price": round(float(_hotel_live.list_total(price) or 0), 2),  # to the paisa, without the dummy coupon
         "currency": price.get("currency") or "INR",
         "image": h.get("heroImage") or first_img or "",   # no photo from the supplier: the app shows a plain placeholder, never a stock photo
         "amenities": [f.get("name") for f in (h.get("facilities") or []) if f.get("name")][:5],
