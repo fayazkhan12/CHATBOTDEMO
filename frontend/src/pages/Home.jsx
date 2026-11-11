@@ -18,18 +18,21 @@ const LABELS = {
     more: (n) => `Show more (${n} more)`,
     next: "Show next options",
     found: (a, b) => `${a} options found, showing ${b}`,
+    closest: (b) => `Nothing in your budget · showing the ${b} closest prices`,
     loading: "Loading...",
   },
   hinglish: {
     more: (n) => `Aur dikhao (${n} aur)`,
     next: "Agle options dikhao",
     found: (a, b) => `${a} options mile, ${b} dikha rahe hain`,
+    closest: (b) => `Budget me koi nahi mila · sabse kareeb ${b} dikha rahe hain`,
     loading: "Loading...",
   },
   hi: {
     more: (n) => `\u0914\u0930 \u0926\u093f\u0916\u093e\u0913 (${n} \u0914\u0930)`,
     next: "\u0905\u0917\u0932\u0947 \u0935\u093f\u0915\u0932\u094d\u092a \u0926\u093f\u0916\u093e\u0913",
     found: (a, b) => `${a} \u0935\u093f\u0915\u0932\u094d\u092a \u092e\u093f\u0932\u0947, ${b} \u0926\u093f\u0916\u093e \u0930\u0939\u0947 \u0939\u0948\u0902`,
+    closest: (b) => `\u092c\u091c\u091f \u092e\u0947\u0902 \u0915\u094b\u0908 \u0928\u0939\u0940\u0902 \u092e\u093f\u0932\u093e \u00b7 \u0938\u092c\u0938\u0947 \u0915\u0930\u0940\u092c ${b} \u0926\u093f\u0916\u093e \u0930\u0939\u0947 \u0939\u0948\u0902`,
     loading: "\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...",
   },
 };
@@ -180,7 +183,9 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onR
         <div className="cards-more" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
           {msg.total > 0 && (
             <small style={{ color: "var(--muted)" }}>
-              {(LABELS[msg.lang] || LABELS.en).found(msg.total, Math.min(msg.visible || 3, msg.cards.length))}
+              {msg.widened
+                ? (LABELS[msg.lang] || LABELS.en).closest(Math.min(msg.visible || 3, msg.cards.length))
+                : (LABELS[msg.lang] || LABELS.en).found(msg.total, Math.min(msg.visible || 3, msg.cards.length))}
             </small>
           )}
           {(msg.cards.length > (msg.visible || 3) || msg.hasMore) && (
