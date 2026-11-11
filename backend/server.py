@@ -1719,17 +1719,53 @@ def _range_in_text(user_text: str) -> Optional[Tuple[float, float]]:
     return (min(a, b), max(a, b))
 
 
+_ONE_AMOUNT = re.compile(r"(?<![\d.,/-])(?:rs\.?\s*|₹\s*)?(\d{1,3}(?:,\d{2,3})+|\d{3,6}|\d+(?:\.\d+)?\s*k)(?![\d/-])(?!\s*(?:nights?|raat|din|days?|log|people|guests?|adults?|kids?|bachch|rooms?|km|min))", re.I)
+_CUE_MIN = re.compile(r"kam\s*se\s*kam|\bse\s*(?:upar|uper|ooper|adhik|[zj]y?a+y?d+a+h?)|\babove\b|more\s*than|\bover\b|\bminimum\b|\bmin\b|\+|ऊपर|ज़्यादा|ज्यादा", re.I)
+_CUE_MAX = re.compile(r"\btak\b|\bunder\b|\bbelow\b|up\s*to|\bupto\b|\bmax(?:imum)?\b|\bwithin\b|\bandar\b|se\s*kam|less\s*than|\bsasta\b|तक|से कम", re.I)
+_CUE_AROUND = re.compile(r"\bwa+l+[aei]+\b|\bwali\b|\bwale\b|aas\s*-?\s*paas|\baround\b|\babout\b|\bapprox|lagbhag|\bkarib\b|\bkareeb\b|आसपास|वाले|वाली", re.I)
+_MONTHS = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\d{1,2}[/-]\d{1,2}", re.I)
+AROUND_SPAN = 0.15        # "1800 wale" = 15% either side of 1800
+
+
+def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[float]]]:
+    """A price the visitor typed, per room per night, as (lowest, highest): "5000 - 9000" -> both; "1800 tak" -> (None, 1800);
+    "1800 se jyada" -> (1800, None); "1800 wale" / "around 1800" -> 1800 +-15%. None when no price, or only a bare number, was typed."""
+    text = str(user_text or "")
+    rng = _range_in_text(text)
+    if rng:
+        return rng
+    if _MONTHS.search(text):
+        text = _MONTHS.sub(" ", text)
+    found = [m for m in _ONE_AMOUNT.finditer(text)]
+    vals = [v for v in (_amounts(m.group(1))[0] for m in found) if v and 300 <= v <= 200_000]
+    if len(vals) != 1:
+        return None
+    v = vals[0]
+    if _CUE_MIN.search(text):
+        return (v, None)
+    if _CUE_AROUND.search(text):
+        return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
+    if _CUE_MAX.search(text) or re.search(r"\bbudget\b|बजट", text, re.I):
+        return (None, v)
+    return None           # a bare number ("2000" as the answer to "what budget?"): the model reads it from the conversation
+
+
 def _apply_text_range(reply: str, block: Optional[Dict[str, Any]], user_text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """The visitor typed a price range but the model left it out of the hotel search: put it in (per room per night)."""
-    if not block or block.get("service") != "hotels" or block.get("budget") or block.get("budget_min"):
+    """The visitor typed a price in THIS message ("1800 wale", "1800 se jyada", "5000 - 9000", "3000 tak"): the hotel search uses
+    exactly that, whatever the model put in the block (it mixed up "around" and "up to"). Prices are per room per night."""
+    if not block or block.get("service") != "hotels":
         return reply, block
-    rng = _range_in_text(user_text)
-    if not rng:
+    want = _budget_in_text(user_text)
+    if not want:
         return reply, block
     start, end = _parse_day(block.get("start_date")), _parse_day(block.get("end_date"))
     nights = max(1, (end - start).days) if (start and end and end > start) else 1
     k = nights * max(1, min(int(block.get("rooms") or 1), int(block.get("travellers") or 1)))
-    block = {**{x: v for x, v in block.items() if x != "budget_tier"}, "budget_min": round(rng[0] * k), "budget": round(rng[1] * k)}
+    block = {x: v for x, v in block.items() if x not in ("budget_tier", "budget", "budget_min")}
+    if want[0]:
+        block["budget_min"] = round(want[0] * k)
+    if want[1]:
+        block["budget"] = round(want[1] * k)
     m = re.search(r"<search>.*?</search>", reply, re.S)
     tag = f"<search>{json.dumps(block, ensure_ascii=False)}</search>"
     return (reply[:m.start()] + tag + reply[m.end():] if m else f"{reply}\n{tag}"), block
@@ -2118,7 +2154,8 @@ SYSTEM_PROMPT = (
     "If the user instead states a price in rupees, it is a price per room per night unless they say it is for the whole stay: "
     "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier. "
     "A RANGE ('5000 se 9000', '5k-9k', 'between 2000 and 4000') is two numbers: budget_min_per_night (the lower one) and budget_per_night (the upper one); "
-    "'above 3000' / '3000 se upar' is only budget_min_per_night. Never search a range without these numbers.\n"
+    "'above 3000' / '3000 se upar' is only budget_min_per_night; '3000 tak' / 'under 3000' is only budget_per_night; "
+    "'3000 wale', 'around 3000', '3000 ke aas-paas' or a bare 3000 means hotels NEAR 3000 (say 'aas-paas', never 'tak'). Never search a range without these numbers.\n"
     "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
     "If it does not (a date when you asked for a place, a place when you asked for a number, a number when you asked for a date, or something unclear), say so in ONE short line "
     "('That looks like a date, not a place.') and ask the SAME question again. A date, a time or a number is never a place name.\n"
