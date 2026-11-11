@@ -1743,9 +1743,11 @@ def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[
     v = vals[0]
     if _CUE_MIN.search(text):
         return (v, None)
+    if _CUE_MAX.search(text):          # "2000 tak wale": "tak" decides, "wale" is only a particle
+        return (None, v)
     if _CUE_AROUND.search(text):
         return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
-    if _CUE_MAX.search(text) or re.search(r"\bbudget\b|बजट", text, re.I):
+    if re.search(r"\bbudget\b|बजट", text, re.I):
         return (None, v)
     return None           # a bare number ("2000" as the answer to "what budget?"): the model reads it from the conversation
 
