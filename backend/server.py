@@ -1725,6 +1725,7 @@ _CUE_MAX = re.compile(r"\btak\b|\bunder\b|\bbelow\b|up\s*to|\bupto\b|\bmax(?:imu
 _CUE_AROUND = re.compile(r"\bwa+l+[aei]+\b|\bwali\b|\bwale\b|aas\s*-?\s*paas|\baround\b|\babout\b|\bapprox|lagbhag|\bkarib\b|\bkareeb\b|आसपास|वाले|वाली", re.I)
 _MONTHS = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\d{1,2}[/-]\d{1,2}", re.I)
 AROUND_SPAN = 0.15        # "1800 wale" = 15% either side of 1800
+_IN_AMOUNT = re.compile(r"\d\s*k?\s*(?:rs\.?|rupees?|rupay[ea]?|₹)?\s*(?:me|mein|main|mai|में)\b", re.I)   # "1000 me", "2k mein" = within that
 
 
 def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[float]]]:
@@ -1743,13 +1744,14 @@ def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[
     v = vals[0]
     if _CUE_MIN.search(text):
         return (v, None)
-    if _CUE_MAX.search(text):          # "2000 tak wale": "tak" decides, "wale" is only a particle
+    if _CUE_MAX.search(text) or _IN_AMOUNT.search(text):   # "2000 tak wale": "tak" decides, "wale" is only a particle; "1000 me" = within 1000
         return (None, v)
     if _CUE_AROUND.search(text):
         return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
     if re.search(r"\bbudget\b|बजट", text, re.I):
         return (None, v)
-    return None           # a bare number ("2000" as the answer to "what budget?"): the model reads it from the conversation
+    # a bare number ("2000", "2000 dikhao" as the answer to "what budget?"): hotels NEAR that price, as the reply says
+    return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
 
 
 def _apply_text_range(reply: str, block: Optional[Dict[str, Any]], user_text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
