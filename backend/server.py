@@ -212,6 +212,14 @@ class SearchRequest(BaseModel):
     budget_tier: Optional[Literal["low", "medium", "high"]] = None
     area: Optional[str] = Field(None, max_length=80)  # neighbourhood / landmark / station inside the city
     lang: Optional[Literal["en", "hinglish", "hi"]] = None   # the language of the chat, for the notes written here
+    # hotel filters, passed on to the company's results API (see chat_memory.clean_filters)
+    stars: Optional[List[int]] = Field(None, max_length=5)
+    free_cancel: Optional[bool] = None
+    breakfast: Optional[bool] = None
+    property_type: Optional[str] = Field(None, max_length=20)
+    amenities: Optional[List[str]] = Field(None, max_length=6)
+    hotel_name: Optional[str] = Field(None, max_length=60)
+    order: Optional[Literal["cheap", "costly", "stars"]] = None
     page: int = Field(1, ge=1, le=50)
     sort: Literal["recommended", "price", "duration", "rating"] = "recommended"
     nationality: str = Field("IN", min_length=2, max_length=2)
@@ -473,6 +481,43 @@ def _total_price(h: Dict[str, Any]) -> float:
         return 0.0
 
 
+def _stars_of(h: Dict[str, Any]) -> int:
+    try:
+        return int(float(h.get("starRating") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _req_filters(req: "SearchRequest") -> Dict[str, Any]:
+    """The checked filters of a search request (the request calls the property type `property_type`)."""
+    d = req.model_dump()
+    d["property"] = d.pop("property_type", None)
+    return cmem.clean_filters(d)
+
+
+def _filter_params(req: "SearchRequest") -> Dict[str, Any]:
+    """The visitor's hotel filters as query parameters of the company's results API (its own names and formats)."""
+    f = _req_filters(req)
+    out: Dict[str, Any] = {}
+    if f.get("stars"):
+        out["starRatings"] = ",".join(str(n) for n in f["stars"])
+    if f.get("free_cancel"):
+        out["freeCancellation"] = "true"
+    if f.get("breakfast"):
+        out["freeBreakfast"] = "true"
+    if f.get("property"):
+        out["propertyType"] = f["property"]
+    if f.get("amenities"):
+        out["amenities"] = ",".join(f["amenities"])
+    if f.get("hotel_name"):
+        out["hotelName"] = f["hotel_name"]
+    if f.get("order") == "costly":
+        out["sortBy"], out["sortOrder"] = "price", "desc"
+    elif f.get("order") == "stars":
+        out["sortBy"], out["sortOrder"] = "rating", "desc"      # the company's "rating" sort is the star class
+    return out
+
+
 async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRequest",
                        closest=None) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
     """Scan the results, keep the hotels closest to the area, then page through them cheapest first.
@@ -513,7 +558,14 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
     if len(pool) < PAGE_SIZE:          # nothing really close: show the nearest ones instead of nothing
         pool = scored[:PAGE_SIZE]
     pool = pool[:AREA_POOL]
-    pool.sort(key=(lambda x: (closest(x[1]), _total_price(x[1]))) if closest else (lambda x: _total_price(x[1])))
+    if closest:
+        pool.sort(key=lambda x: (closest(x[1]), _total_price(x[1])))
+    elif req.order == "costly":
+        pool.sort(key=lambda x: -_total_price(x[1]))
+    elif req.order == "stars":
+        pool.sort(key=lambda x: (-_stars_of(x[1]), _total_price(x[1])))
+    else:
+        pool.sort(key=lambda x: _total_price(x[1]))
     start = min((req.page - 1) * PAGE_SIZE, max(0, len(pool) - 1))
     return pool[start:start + PAGE_SIZE], len(pool)
 
@@ -639,10 +691,15 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 logger.warning("No searchId in response")
                 return None
 
+            filters = _filter_params(req)
+
             async def fetch(page: int, limit: int = PAGE_SIZE, lo: Optional[float] = None, hi: Optional[float] = None,
-                            order: str = "asc") -> Optional[Dict[str, Any]]:
-                """One page of the results, cheapest first (or dearest first). lo / hi: the supplier filters by the total price."""
-                params: Dict[str, Any] = {"page": page, "limit": limit, "sortBy": "price", "sortOrder": order}
+                            order: Optional[str] = None, raw: bool = False) -> Optional[Dict[str, Any]]:
+                """One page of the results. lo / hi: the supplier filters by the total price. The visitor's filters and order
+                go along unless `raw` (the polling) or an explicit price `order` (the prices closest to a budget)."""
+                params: Dict[str, Any] = {"page": page, "limit": limit, "sortBy": "price", "sortOrder": order or "asc"}
+                if not raw:
+                    params.update({k: v for k, v in filters.items() if not (order and k in ("sortBy", "sortOrder"))})
                 if lo:
                     params["minPrice"] = round(lo, 2)
                 if hi:
@@ -654,7 +711,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 
             for attempt in range(12):
                 await asyncio.sleep(3)
-                d = await fetch(1)
+                d = await fetch(1, raw=True)
                 if not d:
                     continue
                 data = d
@@ -669,6 +726,16 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 
             total = int((data.get("pagination") or {}).get("total") or len(data["items"]))
             city_label = str((pick or {}).get("label") or req.destination)
+            filters_failed = ""
+            if filters:
+                fd = await fetch(1)
+                if fd and fd.get("items"):
+                    data = fd
+                    total = int((fd.get("pagination") or {}).get("total") or len(fd["items"]))
+                else:
+                    # nothing matches the filters: the hotels without them, and the note says so
+                    filters_failed = cmem.filters_label(_req_filters(req), req.lang or "en")
+                    filters.clear()
 
             # The budget is a price window on the supplier's total price (every room, every night). A tier is a fixed price per room per
             # night (TIER_BANDS, never shown to the visitor); an amount the visitor named is a ceiling. The supplier filters by price itself.
@@ -731,7 +798,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                     # nothing at this price: the hotels whose price is closest to it (just above it, else just below it)
                     widened = True
                     page = req.page
-                    d = await fetch(page, PAGE_SIZE, hi or lo, None) if (hi or lo) else None
+                    d = await fetch(page, PAGE_SIZE, hi or lo, None, "asc") if (hi or lo) else None
                     if not (d and d.get("items")) and lo:
                         d = await fetch(page, PAGE_SIZE, None, lo, "desc")
                     items = (d or {}).get("items") or []
@@ -759,13 +826,15 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
             card["adults"], card["children"], card["rooms"] = req.travellers, req.children, min(req.rooms, req.travellers)
             card["guests"] = req.travellers + req.children
         note = None
-        if widened:
+        if filters_failed:
+            note = cmem.fixed("filters_none", req.lang or "en").format(what=filters_failed)
+        elif widened:
             per = lambda v: f"{round(v / (nights * rooms)):,}"   # noqa: E731
             amount = (f"{per(lo)}-{per(hi)}" if (lo and hi) else per(hi) if hi else per(lo) if lo else "") if (req.budget or req.budget_min) else ""
             note = (cmem.fixed("widened_area", req.lang or "en").format(area=center["label"]) if (center and near and near[0])
                     else cmem.fixed("widened_amount", req.lang or "en").format(amount=amount) if amount
                     else cmem.fixed("widened_tier_down" if req.budget_tier == "high" else "widened_tier", req.lang or "en"))
-        return {"items": out, "total": total, "page": page, "note": note, "widened": widened}
+        return {"items": out, "total": total, "page": page, "note": note, "widened": widened, "filters_failed": bool(filters_failed)}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
         return None
@@ -1162,6 +1231,7 @@ async def travel_search(req: SearchRequest, request: Request):
         "status": "success", "mode": mode, "service": req.service,
         "results": results, "note": note, "area": req.area if req.service == "hotels" else None,
         "total": total, "page": page, "budget_tier": req.budget_tier, "widened": bool(live and live.get("widened")),
+        "filters": "" if (live and live.get("filters_failed")) else (cmem.filters_label(_req_filters(req), req.lang or "en") if req.service == "hotels" else ""),
         "has_more": bool(total and page and page * PAGE_SIZE < total),
         "searched_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1775,6 +1845,134 @@ def _apply_text_range(reply: str, block: Optional[Dict[str, Any]], user_text: st
     return (reply[:m.start()] + tag + reply[m.end():] if m else f"{reply}\n{tag}"), block
 
 
+_NUM_WORD = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ek": 1, "teen": 3, "char": 4, "chaar": 4, "chār": 4,
+             "panch": 5, "paanch": 5, "पांच": 5, "पाँच": 5, "तीन": 3, "चार": 4}
+_SN = r"([1-5]|one|two|three|four|five|ek|teen|chaa?r|paa?nch|तीन|चार|पांच|पाँच)"
+_ST = r"\s*-?\s*(?:stars?|सितारा|स्टार)(?![a-z])"
+_STAR_UP = re.compile(r"(?<![\d.])" + _SN + _ST + r"\s*(?:\+|plus\b|(?:wale\s*|wali\s*)?(?:se|ke)\s*(?:upar|uper|ooper|zyada|jyada|jaada|jayada|adhik)|(?:and|or|ya|aur)\s*(?:above|upar|uper|more|higher)|above|से\s*ऊपर)", re.I)
+_STAR_MIN = re.compile(r"(?:min(?:imum)?|at\s*least|kam\s*se\s*kam|कम\s*से\s*कम)\s*" + _SN + _ST, re.I)
+_STAR_PAIR = re.compile(r"(?<![\d.])" + _SN + r"\s*(ya|or|/|,|and|aur|&|-|se|to)\s*" + _SN + _ST, re.I)
+_STAR_ONE = re.compile(r"(?<![\d.])" + _SN + _ST, re.I)
+_FREE_CANCEL = re.compile(r"free\s*-?\s*cancel|cancel(?:lation)?\s*(?:free|fri)\b|(?<!non)(?<!non[\s-])\brefundable|फ्री\s*कैंसिल", re.I)
+_BREAKFAST = re.compile(r"(?<!bina\s)(?<!without\s)(?<!no\s)(?:break\s*fast|naa?shta|नाश्ता|ब्रेकफास्ट)", re.I)
+_AMENITY_TEXT = {
+    "Swimming Pool": r"\bpool\b|swimming|पूल",
+    "Internet": r"wi\s*-?\s*fi|internet|वाई\s*-?\s*फाई",
+    "Parking": r"parking|पार्किंग",
+    "Fitness Facility": r"\bgym\b|fitness|जिम",
+    "Spa": r"\bspa\b|स्पा",
+    "Restaurant": r"restaurant|restro\b|रेस्टोरेंट",
+    "Airport Shuttle": r"airport\s*(?:shuttle|pick\s*-?\s*up|transfer)|\bshuttle\b",
+    "Elevator": r"\blift\b|elevator|लिफ्ट",
+    "Room Service": r"room\s*service",
+    "Laundry Services": r"laundry|लॉन्ड्री",
+    "Electric car charging stations": r"\bev\s*charg|electric\s*(?:car|vehicle)\s*charg|charging\s*station",
+}
+_PROPERTY_TEXT = {"GuestHouse": r"guest\s*-?\s*house|गेस्ट\s*हाउस", "Resort": r"resort|रिसॉर्ट", "Hostel": r"hostel|हॉस्टल",
+                  "Homestay": r"home\s*-?\s*stay|होमस्टे", "Apartment": r"apartment|अपार्टमेंट"}
+_ORDER_TEXT = (
+    ("costly", r"sabse\s*(?:me?h?e?n?ga|mah?e?n?ga|costly|expensive)|mehe?nge\s*(?:wale\s*)?pehle|costliest|most\s*expensive|expensive\s*(?:first|pehle)|high\s*to\s*low|महंगे\s*पहले"),
+    ("stars", r"(?:zyada|jyada|most|highest|top|best)\s*stars?|stars?\s*(?:wise|ke\s*hisaab)|best\s*rated|top\s*rated"),
+    ("cheap", r"saste\s*(?:wale\s*)?pehle|cheapest\s*first|low\s*to\s*high|सस्ते\s*पहले"),
+)
+_CLEAR_FILTERS = re.compile(r"filters?\s*(?:ko\s*)?(?:hata|nikal|remove|clear|band|off|reset|mat\s*lagao)|(?:remove|clear|reset|no)\s*(?:all\s*|the\s*)?filters?|bina\s*filters?|without\s*(?:any\s*)?filters?|filters?\s*ke\s*bina|फ़?फिल्टर\s*हटा", re.I)
+# a request to show / narrow the list, not a question about one hotel ("is hotel me parking hai?")
+_FILTER_ASK = re.compile(r"dikha|dikhao|dikhaa|show|wale|wala|wali|waale|chahiye|chaiye|filter|only|sirf|lagao|laga\s*do|with\b|ke\s*saath|sort|pehle|first|दिखा|वाले|चाहिए", re.I)
+
+
+def _star_n(v: str) -> int:
+    return int(v) if v.isdigit() else _NUM_WORD.get(v.lower(), 0)
+
+
+def _filters_in_text(user_text: str) -> Tuple[Dict[str, Any], bool]:
+    """Hotel filters the visitor typed in this message, and whether they asked to remove the filters. A backup for the model."""
+    t = str(user_text or "")
+    clear = bool(_CLEAR_FILTERS.search(t))
+    found: Dict[str, Any] = {}
+    m = _STAR_UP.search(t) or _STAR_MIN.search(t)
+    if m:
+        n = _star_n(m.group(1))
+        if n:
+            found["stars"] = list(range(n, 6))
+    else:
+        m = _STAR_PAIR.search(t)
+        if m:
+            a, b = _star_n(m.group(1)), _star_n(m.group(3))
+            if a and b:
+                lo, hi = min(a, b), max(a, b)
+                found["stars"] = list(range(lo, hi + 1)) if m.group(2).lower() in ("-", "se", "to") else sorted({a, b})
+        else:
+            m = _STAR_ONE.search(t)
+            if m and _star_n(m.group(1)):
+                found["stars"] = [_star_n(m.group(1))]
+    if _FREE_CANCEL.search(t):
+        found["free_cancel"] = True
+    if _BREAKFAST.search(t):
+        found["breakfast"] = True
+    am = [name for name, rx in _AMENITY_TEXT.items() if re.search(rx, t, re.I)]
+    if am:
+        found["amenities"] = am
+    prop = next((name for name, rx in _PROPERTY_TEXT.items() if re.search(rx, t, re.I)), None)
+    if prop:
+        found["property"] = prop
+    order = next((name for name, rx in _ORDER_TEXT if re.search(rx, t, re.I)), None)
+    if order:
+        found["order"] = order
+    return found, clear
+
+
+def _merge_filters(block: Dict[str, Any], found: Dict[str, Any], clear: bool) -> Dict[str, Any]:
+    out = dict(block)
+    if clear:
+        for k in cmem.FILTER_KEYS:
+            out.pop(k, None)
+        if not found:
+            out["no_filters"] = True      # the check below must not bring the old filters back from the trip
+    for k, v in found.items():
+        if k == "amenities":
+            out[k] = list(dict.fromkeys([*(out.get(k) or []), *v]))
+        else:
+            out[k] = v
+    if out.get("order") == "cheap":
+        out.pop("order")
+    clean = cmem.clean_filters(out)
+    for k in cmem.FILTER_KEYS:
+        out.pop(k, None)
+    out.update(clean)
+    return out
+
+
+def _apply_filters(reply: str, block: Optional[Dict[str, Any]], user_text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The filters the visitor typed in THIS message go into the hotel search, whatever the model wrote ("3 star se upar",
+    "free cancellation wale", "filters hatao")."""
+    if not block or block.get("service") != "hotels":
+        return reply, block
+    found, clear = _filters_in_text(user_text)
+    if not found and not clear:
+        return reply, block
+    block = _merge_filters(block, found, clear)
+    block.pop("no_filters", None)
+    m = re.search(r"<search>.*?</search>", reply, re.S)
+    tag = f"<search>{json.dumps(block, ensure_ascii=False)}</search>"
+    return (reply[:m.start()] + tag + reply[m.end():] if m else f"{reply}\n{tag}"), block
+
+
+def _filter_followup(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any]], user_text: str) -> Optional[Tuple[Dict[str, Any], str]]:
+    """Hotels are on screen and the visitor only asks to filter or sort them, but the model wrote no search: the same search
+    with the filters, and the line that goes with it. None for anything else (a question about a hotel, a new trip)."""
+    if not trip or trip.get("service") != "hotels" or not results or results.get("service") != "hotels":
+        return None
+    text = str(user_text or "")
+    if "?" in text or re.search(r"\bkya\b|\bkyaa\b|क्या", text, re.I) or not _FILTER_ASK.search(text):
+        return None
+    found, clear = _filters_in_text(text)
+    if not found and not clear:
+        return None
+    block = _merge_filters(dict(trip), found, clear)
+    on = cmem.filters_label(cmem.clean_filters(block))
+    return block, ("filters_on" if on else "filters_off")
+
+
 def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], str]]:
     """The visitor said yes after a hotel search that found nothing, or only the prices closest to the budget (the note asked
     "shall I look a little higher?"): the next search, and the line that goes with it. None when there is nothing to step."""
@@ -1955,6 +2153,10 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
             raw["origin"] = trip["origin"]
         if service == "hotels" and "area" not in raw and trip.get("area") and _same_place(dest, trip.get("destination")):
             raw["area"] = trip["area"]
+        # the filters of the search before stay on for a follow-up in the same city ("make it cheaper"), unless the block sets its own
+        if (service == "hotels" and not any(k in raw for k in cmem.FILTER_KEYS) and not raw.get("no_filters")
+                and _same_place(dest, trip.get("destination"))):
+            raw.update(cmem.clean_filters(trip))
 
     travellers = 2
     if raw.get("travellers") not in (None, ""):
@@ -2016,6 +2218,7 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
             block["budget_min"] = round(lo)
         if "budget" in block or "budget_min" in block:
             block.pop("budget_tier", None)
+        block.update(cmem.clean_filters(raw))
         area_in = _clean(raw.get("area"), 80)
         if area_in:
             found_area = await _resolve_area(label, area_in)
@@ -2085,6 +2288,8 @@ _HINGLISH = {
     "dedo", "sasta", "sasti", "accha", "acha", "theek", "thik", "haan", "han", "ji", "bhai", "yaar", "yar", "wala", "wali",
     "liye", "lie", "jana", "jaana", "jaa", "chalo", "raha", "rha", "rahi", "rhi", "tha", "thi", "kal", "aaj", "parso", "din", "raat",
     "kuch", "koi", "sab", "sb", "bahut", "bohot", "jyada", "kam", "paas", "namaste", "namaskar", "dhanyavad",
+    "hatao", "hata", "lagao", "laga", "wale", "waale", "waali", "upar", "pehle", "saath", "zyada", "bina", "mehenga", "mehenge",
+    "saste", "dikhaao", "dikhaiye",
 }
 
 
@@ -2171,7 +2376,16 @@ SYSTEM_PROMPT = (
     "12. ROOMS AND CHILDREN (hotels only, optional): travellers means the ADULTS. If the visitor says how many rooms they want, add \"rooms\":N to the block (1 to 5, never more rooms than adults). "
     "If children are travelling, add \"children\":N and \"child_ages\":[the age of each child in years, 0 for under one] and do NOT count the children in travellers. "
     "If a child's age is not known, ask ONE short question for the ages before searching. Never ask about rooms or children unless the visitor mentioned them. "
-    "Example: '2 adults and a 6 year old, 2 rooms' -> \"travellers\":2,\"rooms\":2,\"children\":1,\"child_ages\":[6]. Leave these keys out when there is no such request.\n\n"
+    "Example: '2 adults and a 6 year old, 2 rooms' -> \"travellers\":2,\"rooms\":2,\"children\":1,\"child_ages\":[6]. Leave these keys out when there is no such request.\n"
+    "13. HOTEL FILTERS (optional, only when the visitor asks): add to the hotel block \"stars\":[3,4,5] for '3 star se upar' ([4] for '4 star', [3,4] for '3 ya 4 star'), "
+    "\"free_cancel\":true for free cancellation / refundable, \"breakfast\":true for breakfast included, "
+    "\"property\":\"GuestHouse|Resort|Hostel|Homestay|Apartment|Villa|Palace|Hotel\" for a kind of stay, "
+    "\"amenities\":[from: \"Swimming Pool\",\"Internet\",\"Parking\",\"Fitness Facility\",\"Spa\",\"Restaurant\",\"Bar\",\"Airport Shuttle\",\"Elevator\",\"Room Service\",\"Laundry Services\"] "
+    "(wifi = Internet, gym = Fitness Facility, lift = Elevator), \"hotel_name\":\"...\" when they look for one hotel by its name, "
+    "and \"order\":\"costly\" (costliest first) | \"stars\" (most stars first) | \"cheap\" (cheapest first, the default). "
+    "When hotels are already on screen and the visitor asks to filter or sort them ('free cancellation wale dikhao', 'pool wala', 'sabse mehenge pehle', 'Hotel C9 dikhao'), "
+    "write the SAME hotel block again (same city, dates, guests and budget) with these keys, and say in one short line which filter is on. "
+    "'filters hatao' / 'remove filters' = the same block without them. You CAN filter hotels like this: never say you cannot. A question about one hotel ('is me parking hai?') is not a filter.\n\n"
     "SEARCH TRIGGER - IMPORTANT:\n"
     "Once you have ALL required pieces (for hotels: service, destination, start_date, end_date, travellers, budget_tier; for flights/buses: service, origin, destination, start_date, end_date, travellers; for rides: service, pickup, drop), "
     "END your reply with EXACTLY this JSON block on a new line and NOTHING after it:\n"
@@ -2472,6 +2686,14 @@ async def chat_stream(req: ChatRequest, request: Request):
         reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
         reply = cmem.hide_tier_prices(reply, lang)      # the price limits of sasta / madhyam / premium are never shown
         reply, block = _apply_text_range(reply, block, user_text)
+        reply, block = _apply_filters(reply, block, user_text)
+        if not block:
+            follow = _filter_followup(trip, results, user_text)
+            if follow:
+                line = cmem.fixed(follow[1], lang).format(what=cmem.filters_label(cmem.clean_filters(follow[0]), lang))
+                r2, b2 = await _postprocess_reply(f"{line}\n<search>{cmem.block_json(follow[0])}</search>", named, today, trip, lang, True)
+                if b2:
+                    reply, block = r2, b2
         if block:
             _remember_search(_client_ip(request), block)
         yield f"data: {json.dumps({'type': 'token', 'text': reply}, ensure_ascii=False)}\n\n"

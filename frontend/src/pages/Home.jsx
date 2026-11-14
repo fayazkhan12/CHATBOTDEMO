@@ -37,6 +37,9 @@ const LABELS = {
   },
 };
 
+// The line that names the hotel filters that are on
+const FILTER_LABEL = { en: "Filters", hinglish: "Filter", hi: "\u092b\u093c\u093f\u0932\u094d\u091f\u0930" };
+
 // What the chat says under its reply while a search is running, and when the search finds nothing
 const SEARCH_LABELS = {
   en: {
@@ -159,6 +162,9 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onR
       {msg.ride && <RideQuote ride={msg.ride} onOpen={(vehicle) => onOpenRide(msg.ride, vehicle)} />}
       {msg.cards?.length > 0 && msg.note && (
         <div className="chat-status" data-testid="chat-search-note"><small>{msg.note}</small></div>
+      )}
+      {msg.cards?.length > 0 && msg.filters && (
+        <div className="chat-status" data-testid="chat-search-filters"><small>{(FILTER_LABEL[msg.lang] || FILTER_LABEL.en)}: {msg.filters}</small></div>
       )}
       {msg.cards?.length > 0 && (
         <div className="inline-cards">

@@ -149,7 +149,20 @@ export function extractSearchIntent(text) {
   }
 }
 
-const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "budget_min", "area", "pickup", "drop", "vehicle", "when", "items"];
+// The hotel filters of a chat search, as /travel/search takes them (the server checks every value again).
+function hotelFilters(intent) {
+  const out = {};
+  if (Array.isArray(intent.stars) && intent.stars.length) out.stars = intent.stars.map(Number).filter((n) => n >= 1 && n <= 5);
+  if (intent.free_cancel === true) out.free_cancel = true;
+  if (intent.breakfast === true) out.breakfast = true;
+  if (intent.property) out.property_type = String(intent.property);
+  if (Array.isArray(intent.amenities) && intent.amenities.length) out.amenities = intent.amenities.map(String).slice(0, 6);
+  if (intent.hotel_name) out.hotel_name = String(intent.hotel_name).slice(0, 60);
+  if (intent.order === "costly" || intent.order === "stars") out.order = intent.order;
+  return out;
+}
+
+const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "budget_min", "area", "stars", "free_cancel", "breakfast", "property", "amenities", "hotel_name", "order", "pickup", "drop", "vehicle", "when", "items"];
 const plainIntent = (intent) => Object.fromEntries(KEEP_KEYS.filter((k) => intent[k] !== undefined && intent[k] !== null && intent[k] !== "").map((k) => [k, intent[k]]));
 
 function historyForServer(messages) {
@@ -255,7 +268,7 @@ export async function runSearch(intent, replyId) {
   const lang = chatLang(state.messages.find((m) => m.id === replyId)?.text);
   if (intent.service === "rides") return runRideQuote(intent, replyId, lang);
   if (intent.service === "grocery") return runGrocery(intent, replyId, lang);
-  patchMessage(replyId, { searching: intent.service, noResults: false, note: "", widened: false, interrupted: undefined, lang });
+  patchMessage(replyId, { searching: intent.service, noResults: false, note: "", widened: false, filters: "", interrupted: undefined, lang });
   try {
     const body = {
       service: intent.service,
@@ -272,6 +285,7 @@ export async function runSearch(intent, replyId) {
       ...(intent.budget ? { budget: Number(intent.budget) } : {}),
       ...(intent.budget_min ? { budget_min: Number(intent.budget_min) } : {}),
       ...(intent.area ? { area: intent.area } : {}),
+      ...(intent.service === "hotels" ? hotelFilters(intent) : {}),
       lang,                                      // the notes the server writes come in the chat's language
     };
     const { data } = await http.post("/travel/search", body);
@@ -280,7 +294,7 @@ export async function runSearch(intent, replyId) {
     patchMessage(replyId, {
       searching: false, cards: found, cardsDropped: false, visible: 3, total: data.total || 0,
       page: data.page || 1, hasMore: !!data.has_more, searchBody: body,
-      noResults: found.length === 0, note: data.note || "", widened: !!data.widened, searchService: intent.service, lang,
+      noResults: found.length === 0, note: data.note || "", widened: !!data.widened, filters: data.filters || "", searchService: intent.service, lang,
     });
   } catch {
     setMessages((prev) => [

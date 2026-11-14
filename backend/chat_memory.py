@@ -37,6 +37,108 @@ _ANGLE = re.compile(r"[<>]")
 _ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
 _WHEN = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$")
 
+# Hotel filters the company's results API understands (GET /hotelSearch/search/{id}): star class, free cancellation,
+# breakfast, property type, facilities, hotel name and the order. The keys below are the chat's own names for them.
+FILTER_KEYS = ("stars", "free_cancel", "breakfast", "property", "amenities", "hotel_name", "order")
+PROPERTIES = ("Hotel", "GuestHouse", "Resort", "Palace", "Apartment", "Villa", "Hostel", "Homestay")
+AMENITIES = ("Swimming Pool", "Internet", "Parking", "Fitness Facility", "Spa", "Restaurant", "Bar", "Airport Shuttle",
+             "Elevator", "Room Service", "Laundry Services", "Electric car charging stations")
+ORDERS = ("cheap", "costly", "stars")
+
+
+def clean_filters(raw: Any) -> Dict[str, Any]:
+    """The hotel filters in a block, checked: only known values, right types. {} when there are none."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    stars = raw.get("stars")
+    if isinstance(stars, (int, float, str)) and not isinstance(stars, bool):
+        stars = [stars]
+    if isinstance(stars, list):
+        picked = set()
+        for v in stars[:5]:
+            try:
+                n = int(float(v))
+            except (TypeError, ValueError):
+                continue
+            if 1 <= n <= 5:
+                picked.add(n)
+        if picked:
+            out["stars"] = sorted(picked)
+    for key in ("free_cancel", "breakfast"):
+        if raw.get(key) is True or str(raw.get(key)).lower() == "true":
+            out[key] = True
+    prop = str(raw.get("property") or "").replace(" ", "").lower()
+    match = next((p for p in PROPERTIES if p.lower() == prop), None)
+    if match:
+        out["property"] = match
+    am = raw.get("amenities")
+    if isinstance(am, str):
+        am = [am]
+    if isinstance(am, list):
+        known = {a.lower(): a for a in AMENITIES}
+        picked_am = []
+        for v in am[:6]:
+            a = known.get(str(v).strip().lower())
+            if a and a not in picked_am:
+                picked_am.append(a)
+        if picked_am:
+            out["amenities"] = picked_am
+    name = text(raw.get("hotel_name"), 60).strip()
+    if len(name) >= 2:
+        out["hotel_name"] = name
+    if raw.get("order") in ORDERS and raw.get("order") != "cheap":
+        out["order"] = raw["order"]          # cheapest first is the default: not stored
+    return out
+
+
+_AM_LABEL = {
+    "Swimming Pool": {"en": "pool", "hinglish": "pool", "hi": "पूल"},
+    "Internet": {"en": "Wi-Fi", "hinglish": "Wi-Fi", "hi": "वाई-फाई"},
+    "Parking": {"en": "parking", "hinglish": "parking", "hi": "पार्किंग"},
+    "Fitness Facility": {"en": "gym", "hinglish": "gym", "hi": "जिम"},
+    "Spa": {"en": "spa", "hinglish": "spa", "hi": "स्पा"},
+    "Restaurant": {"en": "restaurant", "hinglish": "restaurant", "hi": "रेस्टोरेंट"},
+    "Bar": {"en": "bar", "hinglish": "bar", "hi": "बार"},
+    "Airport Shuttle": {"en": "airport shuttle", "hinglish": "airport shuttle", "hi": "एयरपोर्ट शटल"},
+    "Elevator": {"en": "lift", "hinglish": "lift", "hi": "लिफ्ट"},
+    "Room Service": {"en": "room service", "hinglish": "room service", "hi": "रूम सर्विस"},
+    "Laundry Services": {"en": "laundry", "hinglish": "laundry", "hi": "लॉन्ड्री"},
+    "Electric car charging stations": {"en": "EV charging", "hinglish": "EV charging", "hi": "ईवी चार्जिंग"},
+}
+_PROP_LABEL = {"Hotel": "hotel", "GuestHouse": "guest house", "Resort": "resort", "Palace": "palace", "Apartment": "apartment",
+               "Villa": "villa", "Hostel": "hostel", "Homestay": "homestay"}
+
+
+def filters_label(f: Dict[str, Any], lang: str = "en") -> str:
+    """'3+ star, free cancellation, pool' in the chat's language; '' when no filter is on."""
+    lang = lang if lang in ("en", "hinglish", "hi") else "en"
+    bits: List[str] = []
+    stars = f.get("stars") or []
+    if stars:
+        top = stars == list(range(stars[0], 6))
+        if len(stars) == 1:
+            bits.append({"hi": f"{stars[0]} स्टार"}.get(lang, f"{stars[0]} star"))
+        elif top:
+            bits.append({"en": f"{stars[0]}+ star", "hinglish": f"{stars[0]} star se upar", "hi": f"{stars[0]} स्टार से ऊपर"}[lang])
+        else:
+            bits.append({"hi": "/".join(map(str, stars)) + " स्टार"}.get(lang, "/".join(map(str, stars)) + " star"))
+    if f.get("free_cancel"):
+        bits.append({"en": "free cancellation", "hinglish": "free cancellation", "hi": "फ्री कैंसिलेशन"}[lang])
+    if f.get("breakfast"):
+        bits.append({"en": "breakfast included", "hinglish": "breakfast ke saath", "hi": "नाश्ते के साथ"}[lang])
+    if f.get("property"):
+        bits.append(_PROP_LABEL.get(f["property"], f["property"]))
+    for a in f.get("amenities") or []:
+        bits.append(_AM_LABEL.get(a, {}).get(lang, a))
+    if f.get("hotel_name"):
+        bits.append({"en": f'name "{f["hotel_name"]}"', "hinglish": f'naam "{f["hotel_name"]}"', "hi": f'नाम "{f["hotel_name"]}"'}[lang])
+    if f.get("order") == "costly":
+        bits.append({"en": "costliest first", "hinglish": "mehenge pehle", "hi": "महंगे पहले"}[lang])
+    elif f.get("order") == "stars":
+        bits.append({"en": "most stars first", "hinglish": "zyada star wale pehle", "hi": "ज़्यादा स्टार वाले पहले"}[lang])
+    return ", ".join(bits)
+
 
 def text(value: Any, limit: int = 80) -> str:
     """One line of plain text: no control characters, no angle brackets (so nobody can fake a tag)."""
@@ -104,6 +206,7 @@ def clean_search(raw: Any) -> Optional[Dict[str, Any]]:
         occ = occupancy(raw)
         if occ:
             out.update(occ)
+        out.update(clean_filters(raw))
     if raw.get("budget_tier") in TIERS:
         out["budget_tier"] = raw["budget_tier"]
     for key in ("budget", "budget_min"):
@@ -287,6 +390,10 @@ def describe_trip(trip: Dict[str, Any]) -> str:
         bits.append(f"maximum budget Rs {int(trip['budget'])} for the whole stay")
     elif trip.get("budget_min"):
         bits.append(f"budget from Rs {int(trip['budget_min'])} for the whole stay")
+    if service == "hotels":
+        on = filters_label(clean_filters(trip))
+        if on:
+            bits.append(f"filters: {on}")
     return ", ".join(bits)
 
 
@@ -760,6 +867,21 @@ FIXED = {
         "en": "Okay, trying again.",
         "hinglish": "Theek hai, dobara dekhte hain.",
         "hi": "ठीक है, फिर से देखते हैं।",
+    },
+    "filters_on": {
+        "en": "Done, showing hotels with: {what}.",
+        "hinglish": "Theek hai, ye filter laga diye: {what}.",
+        "hi": "ठीक है, ये फ़िल्टर लगा दिए: {what}।",
+    },
+    "filters_off": {
+        "en": "Filters removed, showing all hotels again.",
+        "hinglish": "Filter hata diye, ab saare hotels dikh rahe hain.",
+        "hi": "फ़िल्टर हटा दिए, अब सारे होटल दिख रहे हैं।",
+    },
+    "filters_none": {
+        "en": "No hotel here matches {what}, so these are without that filter.",
+        "hinglish": "{what} wala koi hotel yahan nahi mila, isliye bina is filter ke dikha rahe hain.",
+        "hi": "{what} वाला कोई होटल यहाँ नहीं मिला, इसलिए बिना इस फ़िल्टर के दिखा रहे हैं।",
     },
     "hotels_unavailable": {
         "en": "Live hotels are not available right now. Please try again shortly.",
