@@ -9,7 +9,7 @@ import { http } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useChat, sendMessage, loadMore as storeLoadMore, retrySearch, clearChat, undoClear, setOwner, noteSelection, selectionFromItem, visibleCards } from "../lib/chatstore";
 import { rideUrl } from "../lib/rides";
-import { perNightLine, money } from "../lib/format";
+import { perNightLine, stayLabel, money } from "../lib/format";
 import { speak, stopSpeaking as cancelSpeech, unlockAudio, playThinkingCue, prefetchCues, getVoiceGender, getVoiceMode, setVoiceMode } from "../lib/tts";
 
 // Labels under the result cards, in the language the user wrote in
@@ -175,9 +175,9 @@ const MessageBubble = ({ msg, onOpenCard, onMore, onOpenRide, onOpenGrocery, onR
                 <span className="inline-type">{card.type}{card.mode !== "LIVE" && <em className="demo-chip">Demo</em>}</span>
                 <h4>{card.title}</h4>
                 <small>{card.brand}</small>
-                {perNightLine(card) ? <small data-testid="per-night">{perNightLine(card)}</small> : null}
+                {perNightLine(card) ? <small className="per-night" data-testid="per-night">{perNightLine(card)}</small> : null}
                 <div className="inline-footer">
-                  <strong>{money(card.price)}</strong>
+                  <strong>{money(card.price)}{stayLabel(card) ? <span className="stay-label" data-testid="stay-total">{stayLabel(card)}</span> : null}</strong>
                   <button className="inline-cta" data-testid={`inline-book-${card.id}`}>View <ArrowRight size={12}/></button>
                 </div>
               </div>

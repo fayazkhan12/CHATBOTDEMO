@@ -39,7 +39,7 @@ export default function ResultCard({ item, onOpen }) {
           <small>{isLive ? "Live price" : "Sample price"}</small>
           <strong>{money(item.price)}</strong>
           {item.type === "hotel" && nights > 0 ? <small>{plural(nights, "night")} total</small> : null}
-          {perNightLine(item) ? <small data-testid="per-night">{perNightLine(item)}</small> : null}
+          {perNightLine(item) ? <small className="per-night" data-testid="per-night">{perNightLine(item)}</small> : null}
         </div>
         <button className="result-cta" data-testid={`book-btn-${item.id}`} onClick={(e) => { e.stopPropagation(); onOpen(item); }}>
           View <ArrowRight size={14}/>

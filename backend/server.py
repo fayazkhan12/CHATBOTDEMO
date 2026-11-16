@@ -1792,15 +1792,16 @@ def _range_in_text(user_text: str) -> Optional[Tuple[float, float]]:
 _ONE_AMOUNT = re.compile(r"(?<![\d.,/-])(?:rs\.?\s*|₹\s*)?(\d{1,3}(?:,\d{2,3})+|\d{3,6}|\d+(?:\.\d+)?\s*k)(?![\d/-])(?!\s*(?:nights?|raat|din|days?|log|people|guests?|adults?|kids?|bachch|rooms?|km|min))", re.I)
 _CUE_MIN = re.compile(r"kam\s*se\s*kam|\bse\s*(?:upar|uper|ooper|adhik|[zj]y?a+y?d+a+h?)|\babove\b|more\s*than|\bover\b|\bminimum\b|\bmin\b|\+|ऊपर|ज़्यादा|ज्यादा", re.I)
 _CUE_MAX = re.compile(r"\btak\b|\bunder\b|\bbelow\b|up\s*to|\bupto\b|\bmax(?:imum)?\b|\bwithin\b|\bandar\b|se\s*kam|less\s*than|\bsasta\b|तक|से कम", re.I)
-_CUE_AROUND = re.compile(r"\bwa+l+[aei]+\b|\bwali\b|\bwale\b|aas\s*-?\s*paas|\baround\b|\babout\b|\bapprox|lagbhag|\bkarib\b|\bkareeb\b|आसपास|वाले|वाली", re.I)
+_CUE_AROUND = re.compile(r"\bwa+l+[aei]+\b|\bwali\b|\bwale\b|aas\s*-?\s*paas|\baround\b|\babout\b|\bapprox|lagbhag|\blg\s*-?\s*bh?a?g\b|\blgbhg\b|lagbag|\bkarib\b|\bkareeb\b|आसपास|वाले|वाली", re.I)
 _MONTHS = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\d{1,2}[/-]\d{1,2}", re.I)
-AROUND_SPAN = 0.15        # "1800 wale" = 15% either side of 1800
+AROUND_UP = 0.25          # "1200 wale" / "1200" / "lagbhag 1200" = 1200 to 1500 a night: from the price up, closest first
 _IN_AMOUNT = re.compile(r"\d\s*k?\s*(?:rs\.?|rupees?|rupay[ea]?|₹)?\s*(?:me|mein|main|mai|में)\b", re.I)   # "1000 me", "2k mein" = within that
 
 
 def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[float]]]:
     """A price the visitor typed, per room per night, as (lowest, highest): "5000 - 9000" -> both; "1800 tak" -> (None, 1800);
-    "1800 se jyada" -> (1800, None); "1800 wale" / "around 1800" -> 1800 +-15%. None when no price, or only a bare number, was typed."""
+    "1800 se jyada" -> (1800, None); "1200 wale" / "around 1200" / a bare "1200" -> (1200, 1500): from the price up by AROUND_UP.
+    None when no price was typed."""
     text = str(user_text or "")
     rng = _range_in_text(text)
     if rng:
@@ -1817,11 +1818,11 @@ def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[
     if _CUE_MAX.search(text) or _IN_AMOUNT.search(text):   # "2000 tak wale": "tak" decides, "wale" is only a particle; "1000 me" = within 1000
         return (None, v)
     if _CUE_AROUND.search(text):
-        return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
+        return (round(v, 2), round(v * (1 + AROUND_UP), 2))
     if re.search(r"\bbudget\b|बजट", text, re.I):
         return (None, v)
     # a bare number ("2000", "2000 dikhao" as the answer to "what budget?"): hotels NEAR that price, as the reply says
-    return (round(v * (1 - AROUND_SPAN), 2), round(v * (1 + AROUND_SPAN), 2))
+    return (round(v, 2), round(v * (1 + AROUND_UP), 2))
 
 
 def _apply_text_range(reply: str, block: Optional[Dict[str, Any]], user_text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
@@ -2364,7 +2365,7 @@ SYSTEM_PROMPT = (
     "put a per-night price in the block as a number called budget_per_night, or a price for the whole stay as a number called budget, and omit budget_tier. "
     "A RANGE ('5000 se 9000', '5k-9k', 'between 2000 and 4000') is two numbers: budget_min_per_night (the lower one) and budget_per_night (the upper one); "
     "'above 3000' / '3000 se upar' is only budget_min_per_night; '3000 tak' / 'under 3000' is only budget_per_night; "
-    "'3000 wale', 'around 3000', '3000 ke aas-paas' or a bare 3000 means hotels NEAR 3000 (say 'aas-paas', never 'tak'). Never search a range without these numbers.\n"
+    "'3000 wale', 'around 3000', '3000 ke aas-paas', 'lagbhag 3000' or a bare 3000 means hotels from 3000 up to about 3750 a night, the ones closest to 3000 first (say '3000 se thoda upar tak', never 'tak 3000'). Never search a range without these numbers.\n"
     "8. UNDERSTAND BEFORE YOU ACKNOWLEDGE: say 'Got it', 'Sure' or repeat the visitor's answer only when it really answers your question. "
     "If it does not (a date when you asked for a place, a place when you asked for a number, a number when you asked for a date, or something unclear), say so in ONE short line "
     "('That looks like a date, not a place.') and ask the SAME question again. A date, a time or a number is never a place name.\n"

@@ -118,6 +118,15 @@ export function demoBookingNote(item) {
 
 // A hotel offer's price is for the whole stay. The per-night price of ONE room ("₹2,100 per night") is what budgets are about;
 // "" when it would only repeat the total (one night, one room) or the offer is not a hotel stay.
+// "total, 2 nights" next to a hotel's big price, so nobody reads the whole stay as one night. "" for one night of one room.
+export function stayLabel(item) {
+  if (!item || item.type !== "hotel") return "";
+  const nights = Number(item.nights) || 0;
+  const rooms = Math.max(1, Number(item.rooms) || 1);
+  if (nights < 1 || (nights === 1 && rooms === 1)) return "";
+  return `total, ${nights} night${nights > 1 ? "s" : ""}${rooms > 1 ? `, ${rooms} rooms` : ""}`;
+}
+
 export function perNightLine(item) {
   if (!item || item.type !== "hotel") return "";
   const nights = Number(item.nights) || 0;
