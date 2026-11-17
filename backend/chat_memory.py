@@ -207,6 +207,15 @@ def clean_search(raw: Any) -> Optional[Dict[str, Any]]:
         if occ:
             out.update(occ)
         out.update(clean_filters(raw))
+        try:                                  # a point the hotels are measured from ("mere paas" / a pincode), ~100 m
+            la, lo = round(float(raw.get("lat")), 3), round(float(raw.get("lng")), 3)
+            if 5 <= la <= 38 and 67 <= lo <= 98 and not out.get("area"):
+                out["lat"], out["lng"] = la, lo
+                lbl = text(raw.get("near_label"), 60)
+                if lbl:
+                    out["near_label"] = lbl
+        except (TypeError, ValueError):
+            pass
     if raw.get("budget_tier") in TIERS:
         out["budget_tier"] = raw["budget_tier"]
     for key in ("budget", "budget_min"):
@@ -364,6 +373,8 @@ def describe_trip(trip: Dict[str, Any]) -> str:
         bits = [f"hotels in {trip.get('destination') or '?'}"]
         if trip.get("area"):
             bits.append(f"near {trip['area']}")
+        elif trip.get("lat") is not None:
+            bits.append(f"nearest to {trip.get('near_label') or 'a point'} first")
     else:
         bits = [f"{service} from {trip.get('origin') or '?'} to {trip.get('destination') or '?'}"]
     a, b = trip.get("start_date"), trip.get("end_date")

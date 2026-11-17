@@ -39,8 +39,10 @@ from starlette.middleware.cors import CORSMiddleware
 
 try:
     import chat_memory as cmem
+    import geo
 except ImportError:  # the app was started from the repo root as backend.server
     from backend import chat_memory as cmem
+    from backend import geo
 
 # backend -> AI chatbot -> modules -> src -> project root
 def _find_root_env() -> Path:
@@ -220,6 +222,10 @@ class SearchRequest(BaseModel):
     amenities: Optional[List[str]] = Field(None, max_length=6)
     hotel_name: Optional[str] = Field(None, max_length=60)
     order: Optional[Literal["cheap", "costly", "stars"]] = None
+    # a point the hotels are measured from: the visitor's own location ("mere paas") or a pincode; nearest first
+    lat: Optional[float] = Field(None, ge=5, le=38)
+    lng: Optional[float] = Field(None, ge=67, le=98)
+    near_label: Optional[str] = Field(None, max_length=60)
     page: int = Field(1, ge=1, le=50)
     sort: Literal["recommended", "price", "duration", "rating"] = "recommended"
     nationality: str = Field("IN", min_length=2, max_length=2)
@@ -519,7 +525,7 @@ def _filter_params(req: "SearchRequest") -> Dict[str, Any]:
 
 
 async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRequest",
-                       closest=None) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
+                       closest=None, by_distance: bool = False) -> Optional[Tuple[List[Tuple[float, Dict[str, Any]]], int]]:
     """Scan the results, keep the hotels closest to the area, then page through them cheapest first.
     `closest(hotel) -> number`: order the nearby hotels by it instead (used to show the prices nearest to a budget)."""
     limit = AREA_PAGE_LIMIT
@@ -562,6 +568,8 @@ async def _hotels_near(fetch, total: int, center: Dict[str, Any], req: "SearchRe
         pool.sort(key=lambda x: (closest(x[1]), _total_price(x[1])))
     elif req.order == "costly":
         pool.sort(key=lambda x: -_total_price(x[1]))
+    elif by_distance:                  # "mere paas" / a pincode: the nearest hotels first
+        pool.sort(key=lambda x: (x[0], _total_price(x[1])))
     elif req.order == "stars":
         pool.sort(key=lambda x: (-_stars_of(x[1]), _total_price(x[1])))
     else:
@@ -763,7 +771,11 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                 return 0.0
 
             near = None
-            center = await _resolve_area(city_label, req.area) if req.area else None
+            point = req.lat is not None and req.lng is not None
+            if point:
+                center = {"label": _clean(req.near_label, 60) or "your location", "lat": float(req.lat), "long": float(req.lng)}
+            else:
+                center = await _resolve_area(city_label, req.area) if req.area else None
             if center:
                 if window:
                     async def fetch_window(page: int, limit: int = PAGE_SIZE) -> Optional[Dict[str, Any]]:
@@ -771,7 +783,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 
                     first = await fetch(1, PAGE_SIZE, lo, hi)
                     in_window = int(((first or {}).get("pagination") or {}).get("total") or 0)
-                    near = await _hotels_near(fetch_window, in_window, center, req) if in_window else None
+                    near = await _hotels_near(fetch_window, in_window, center, req, by_distance=point) if in_window else None
                     if near and near[0] and min(dist for dist, _ in near[0]) > AREA_RADIUS_KM:
                         near = None        # inside the budget only far from the area: the area matters more, see below
                     if not near or not near[0]:
@@ -779,7 +791,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                         near = await _hotels_near(fetch, total, center, req, closest=gap)
                         widened = bool(near and near[0])
                 else:
-                    near = await _hotels_near(fetch, total, center, req)
+                    near = await _hotels_near(fetch, total, center, req, by_distance=point)
 
             if near and near[0]:
                 picked, total = near
@@ -1802,7 +1814,7 @@ def _budget_in_text(user_text: str) -> Optional[Tuple[Optional[float], Optional[
     """A price the visitor typed, per room per night, as (lowest, highest): "5000 - 9000" -> both; "1800 tak" -> (None, 1800);
     "1800 se jyada" -> (1800, None); "1200 wale" / "around 1200" / a bare "1200" -> (1200, 1500): from the price up by AROUND_UP.
     None when no price was typed."""
-    text = str(user_text or "")
+    text = geo.strip_pincodes(str(user_text or ""))     # "302017" is a pincode, not a price
     rng = _range_in_text(text)
     if rng:
         return rng
@@ -1972,6 +1984,53 @@ def _filter_followup(trip: Optional[Dict[str, Any]], results: Optional[Dict[str,
     block = _merge_filters(dict(trip), found, clear)
     on = cmem.filters_label(cmem.clean_filters(block))
     return block, ("filters_on" if on else "filters_off")
+
+
+_HOTELISH = re.compile(r"hotel|hotal|stay|room|kamra|rukn|thehar|lodge|resort|guest\s*house|होटल|कमरा|रुक", re.I)
+
+
+async def _visitor_place(context: Any, user_text: str, history_users: List[str], trip: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """Where the visitor wants hotels, when it is a pincode or their own location: (place, asked_near_me_without_location).
+    A pincode in this message (or an earlier one) wins; "mere paas" uses the location the website sent (context.here)."""
+    ctx = context if isinstance(context, dict) else {}
+    pin = geo.pincode_in(user_text) or next((p for p in (geo.pincode_in(t) for t in reversed(history_users[-6:])) if p), None)
+    if pin:
+        place = await geo.place_from_pincode(pin, _akbar_destinations, _resolve_area)
+        if place:
+            return place, False
+    near_now = geo.wants_near_me(user_text) and (bool(_HOTELISH.search(user_text)) or (trip or {}).get("service") == "hotels"
+                                                  or any(_HOTELISH.search(t) for t in history_users[-3:]))
+    near_before = any(geo.wants_near_me(t) for t in history_users[-6:])
+    here = ctx.get("here") if isinstance(ctx.get("here"), dict) else None
+    if here and (near_now or near_before):
+        place = await geo.place_from_point(here.get("lat"), here.get("lng"), _akbar_destinations)
+        if place:
+            return place, False
+    return None, bool(near_now)
+
+
+def _place_note(place: Optional[Dict[str, Any]], missing: bool) -> str:
+    """What the model is told about the visitor's pincode / location."""
+    if place:
+        where = f"pincode {place['pincode']} ({place['label']}) in {place['city']}" if place["kind"] == "pincode" else f"their current location ({place['label']}, {place['city']})"
+        return (f"\n\nPLACE: the visitor means {where}. For hotels use destination \"{place['city']}\" (the app finds the hotels nearest to that "
+                "point itself: do NOT put an area in the block and do not ask which city). Still ask for the dates and guests if they are not known yet.\n")
+    if missing:
+        return ("\n\nPLACE: the visitor asked for hotels near them, but their location is not available (not shared). "
+                "Ask in ONE short line for their area or 6-digit pincode, or to allow location access. Do not search yet.\n")
+    return ""
+
+
+def _apply_place(reply: str, block: Optional[Dict[str, Any]], place: Optional[Dict[str, Any]]) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """A hotel search in the place's city is measured from the place (nearest first)."""
+    if not block or not place or block.get("service") != "hotels" or not _same_place(block.get("destination"), place["city"]):
+        return reply, block
+    block = {k: v for k, v in block.items() if k != "area"}
+    block.update({"lat": round(place["lat"], 4), "lng": round(place["long"], 4),
+                  "near_label": ("your location" if place["kind"] == "gps" else place["label"])[:60]})
+    m = re.search(r"<search>.*?</search>", reply, re.S)
+    tag = f"<search>{json.dumps(block, ensure_ascii=False)}</search>"
+    return (reply[:m.start()] + tag + reply[m.end():] if m else f"{reply}\n{tag}"), block
 
 
 def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -2154,6 +2213,9 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
             raw["origin"] = trip["origin"]
         if service == "hotels" and "area" not in raw and trip.get("area") and _same_place(dest, trip.get("destination")):
             raw["area"] = trip["area"]
+        if (service == "hotels" and not raw.get("area") and trip.get("lat") is not None and "lat" not in raw
+                and _same_place(dest, trip.get("destination"))):
+            raw.update({k: trip[k] for k in ("lat", "lng", "near_label") if trip.get(k) is not None})   # "mere paas" / pincode stays on
         # the filters of the search before stay on for a follow-up in the same city ("make it cheaper"), unless the block sets its own
         if (service == "hotels" and not any(k in raw for k in cmem.FILTER_KEYS) and not raw.get("no_filters")
                 and _same_place(dest, trip.get("destination"))):
@@ -2220,6 +2282,11 @@ async def _fix_search_block(raw: Any, user_text: str, today: date, trip: Optiona
         if "budget" in block or "budget_min" in block:
             block.pop("budget_tier", None)
         block.update(cmem.clean_filters(raw))
+        pt = geo.round_point(raw.get("lat"), raw.get("lng"))
+        if pt and not raw.get("area"):
+            block["lat"], block["lng"] = pt
+            if _clean(raw.get("near_label"), 60):
+                block["near_label"] = _clean(raw.get("near_label"), 60)
         area_in = _clean(raw.get("area"), 80)
         if area_in:
             found_area = await _resolve_area(label, area_in)
@@ -2378,6 +2445,9 @@ SYSTEM_PROMPT = (
     "If children are travelling, add \"children\":N and \"child_ages\":[the age of each child in years, 0 for under one] and do NOT count the children in travellers. "
     "If a child's age is not known, ask ONE short question for the ages before searching. Never ask about rooms or children unless the visitor mentioned them. "
     "Example: '2 adults and a 6 year old, 2 rooms' -> \"travellers\":2,\"rooms\":2,\"children\":1,\"child_ages\":[6]. Leave these keys out when there is no such request.\n"
+    "14. NEAR ME / PINCODE: 'mere paas', 'near me', 'yahin aas-paas' or a 6-digit Indian pincode ('302017 me hotel') is a place, never a price or a guest count. "
+    "The app works out the city and the exact point (see PLACE below when it is known): write a normal hotel block for that city and never ask which city. "
+    "A 6-digit number is a pincode, not a budget.\n"
     "13. HOTEL FILTERS (optional, only when the visitor asks): add to the hotel block \"stars\":[3,4,5] for '3 star se upar' ([4] for '4 star', [3,4] for '3 ya 4 star'), "
     "\"free_cancel\":true for free cancellation / refundable, \"breakfast\":true for breakfast included, "
     "\"property\":\"GuestHouse|Resort|Hostel|Homestay|Apartment|Villa|Palace|Hotel\" for a kind of stay, "
@@ -2680,14 +2750,17 @@ async def chat_stream(req: ChatRequest, request: Request):
         # a visitor who talks (the website sends context.voice = "female" | "male") gets a reply written to be heard
         spoken_by = (req.context or {}).get("voice") if isinstance(req.context, dict) else None
         voice_rules = _voice_style("male" if spoken_by == "male" else "female") if spoken_by else ""
-        system_text = _system_prompt() + voice_rules + cmem.memory_prompt(trip, results, selection) + cmem.input_note(user_text, today) + hint
+        place, place_missing = await _visitor_place(req.context, user_text, history_users, trip)
+        system_text = (_system_prompt() + voice_rules + cmem.memory_prompt(trip, results, selection) + cmem.input_note(user_text, today) + hint
+                       + _place_note(place, place_missing))
         # the cities the visitor named so far (the model may only search for those) - or the city of the current trip
-        named = " ".join(history_users + [user_text])
+        named = " ".join(history_users + [user_text] + ([place["city"]] if place else []))
 
         reply, block = await _answer(contents, system_text, named, today, trip, user_text, lang, cmem.nights_known(turns, user_text, today))
         reply = cmem.hide_tier_prices(reply, lang)      # the price limits of sasta / madhyam / premium are never shown
         reply, block = _apply_text_range(reply, block, user_text)
         reply, block = _apply_filters(reply, block, user_text)
+        reply, block = _apply_place(reply, block, place)
         if not block:
             follow = _filter_followup(trip, results, user_text)
             if follow:

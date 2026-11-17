@@ -124,6 +124,7 @@ export function setOwner(owner) {
 
 let undoSnapshot = null;
 export function clearChat() {
+  here = null;
   undoSnapshot = state.messages.length > 1 ? state : null;
   state = { ...fresh(state.owner) };
   listeners.forEach((l) => l());
@@ -162,7 +163,7 @@ function hotelFilters(intent) {
   return out;
 }
 
-const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "budget_min", "area", "stars", "free_cancel", "breakfast", "property", "amenities", "hotel_name", "order", "pickup", "drop", "vehicle", "when", "items"];
+const KEEP_KEYS = ["service", "origin", "destination", "destination_id", "start_date", "end_date", "travellers", "rooms", "children", "child_ages", "budget_tier", "budget", "budget_min", "area", "lat", "lng", "near_label", "stars", "free_cancel", "breakfast", "property", "amenities", "hotel_name", "order", "pickup", "drop", "vehicle", "when", "items"];
 const plainIntent = (intent) => Object.fromEntries(KEEP_KEYS.filter((k) => intent[k] !== undefined && intent[k] !== null && intent[k] !== "").map((k) => [k, intent[k]]));
 
 function historyForServer(messages) {
@@ -285,6 +286,8 @@ export async function runSearch(intent, replyId) {
       ...(intent.budget ? { budget: Number(intent.budget) } : {}),
       ...(intent.budget_min ? { budget_min: Number(intent.budget_min) } : {}),
       ...(intent.area ? { area: intent.area } : {}),
+      ...(intent.service === "hotels" && intent.lat != null && intent.lng != null && !intent.area
+        ? { lat: Number(intent.lat), lng: Number(intent.lng), ...(intent.near_label ? { near_label: String(intent.near_label).slice(0, 60) } : {}) } : {}),
       ...(intent.service === "hotels" ? hotelFilters(intent) : {}),
       lang,                                      // the notes the server writes come in the chat's language
     };
@@ -383,6 +386,27 @@ export function retrySearch(msgId) {
 }
 
 // ------------------------------------------------------------------ sending a message
+// "mere paas hotel", "near me": the visitor's location, asked for once and kept only in memory (never saved), ~100 m
+const NEAR_ME = /\bnear\s*(?:me|by|my\s*(?:location|place))\b|\bnearby\b|\baround\s*me\b|\bmere?\s*(?:paas|pass|pas|aas\s*-?\s*paas|nazdeek|najdeek|kareeb|karib)\b|\byahi?n?\s*(?:ke\s*)?(?:paas|aas\s*-?\s*paas|nazdeek)\b|\bmeri\s*(?:location|jagah)\b|\bcurrent\s*location\b|मेरे\s*पास|मेरे\s*नज़?दीक|यहीं?\s*(?:के\s*)?(?:पास|आसपास)|मेरी\s*लोकेशन/i;
+const HOTELISH = /hotel|hotal|stay|room|kamra|lodge|resort|guest\s*house|होटल|कमरा/i;
+let here = null;
+
+function wantsNearbyHotels(t) {
+  if (!NEAR_ME.test(t)) return false;
+  if (HOTELISH.test(t) || state.trip?.service === "hotels") return true;
+  return state.messages.slice(-4).some((m) => m.role === "user" && HOTELISH.test(m.text || ""));
+}
+
+async function locateForHotels() {
+  try {
+    const p = await currentPlace();
+    here = { lat: Math.round(p.lat * 1000) / 1000, lng: Math.round(p.lng * 1000) / 1000 };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendMessage(text, { userName = null, voice = null, onReply = null } = {}) {
   const t = String(text || "").trim();
   if (!t || state.sending) return null;
@@ -400,6 +424,8 @@ export async function sendMessage(text, { userName = null, voice = null, onReply
     }
   }
 
+  const nearby = wantsNearbyHotels(t);
+  const located = nearby && !here ? await locateForHotels() : !!here;
   const history = historyForServer(state.messages);
   const results = resultsForServer(state.messages);
   const userId = `u-${Date.now()}`;
@@ -422,6 +448,8 @@ export async function sendMessage(text, { userName = null, voice = null, onReply
           ...(state.trip ? { trip: state.trip } : {}),
           ...(state.selection ? { selection: state.selection } : {}),
           ...(results ? { results } : {}),
+          ...(here ? { here } : {}),
+          ...(nearby && !located ? { here_denied: true } : {}),
         },
       }),
     });
