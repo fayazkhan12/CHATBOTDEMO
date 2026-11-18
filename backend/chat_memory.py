@@ -894,6 +894,21 @@ FIXED = {
         "hinglish": "{what} wala koi hotel yahan nahi mila, isliye bina is filter ke dikha rahe hain.",
         "hi": "{what} वाला कोई होटल यहाँ नहीं मिला, इसलिए बिना इस फ़िल्टर के दिखा रहे हैं।",
     },
+    "from_tomorrow": {
+        "en": "Okay, looking from tomorrow.",
+        "hinglish": "Theek hai, kal se dekh rahe hain.",
+        "hi": "ठीक है, कल से देख रहे हैं।",
+    },
+    "hotels_none_today": {
+        "en": "No hotel can be booked online for check-in today. Shall I look from tomorrow?",
+        "hinglish": "Aaj check-in ke liye online koi hotel nahi mil raha. Kal se dekhun?",
+        "hi": "आज चेक-इन के लिए ऑनलाइन कोई होटल नहीं मिल रहा। कल से देखूँ?",
+    },
+    "hotels_none": {
+        "en": "No hotel came back for these dates. Try other dates or another area.",
+        "hinglish": "In dates ke liye koi hotel nahi aaya. Doosri dates ya area try karein.",
+        "hi": "इन तारीख़ों के लिए कोई होटल नहीं आया। दूसरी तारीख़ें या इलाक़ा आज़माएँ।",
+    },
     "hotels_unavailable": {
         "en": "Live hotels are not available right now. Please try again shortly.",
         "hinglish": "Abhi live hotels nahi mil paa rahe. Thodi der baad dobara try karein.",

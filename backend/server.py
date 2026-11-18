@@ -686,18 +686,26 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
         sid = ""
         data: Dict[str, Any] = {}
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)) as c:
-            r = await c.post(f"{HOTEL_API_BASE}/search", json=payload)
-            if r.status_code != 200:
-                logger.warning("Hotel search start non-200: %s %s", r.status_code, r.text[:200])
-                return None
-            started = r.json()
-            msg = started.get("message")   # the company API puts the search id in `message` (and a text in `data`); accept either place
-            if not isinstance(msg, dict):
-                msg = started.get("data")
-            sid = msg.get("searchId") if isinstance(msg, dict) else ""
+            for attempt in range(2):            # a hiccup of the company server: one more try before giving up
+                try:
+                    r = await c.post(f"{HOTEL_API_BASE}/search", json=payload)
+                except httpx.HTTPError as exc:
+                    logger.warning("Hotel search start failed: %s", type(exc).__name__)
+                    r = None
+                if r is not None and r.status_code == 200:
+                    started = r.json()
+                    msg = started.get("message")   # the company API puts the search id in `message` (and a text in `data`); accept either
+                    if not isinstance(msg, dict):
+                        msg = started.get("data")
+                    sid = msg.get("searchId") if isinstance(msg, dict) else ""
+                    if sid:
+                        break
+                    logger.warning("No searchId in response")
+                elif r is not None:
+                    logger.warning("Hotel search start non-200: %s %s", r.status_code, r.text[:200])
+                await asyncio.sleep(2)
             if not sid:
-                logger.warning("No searchId in response")
-                return None
+                return _hotel_fail("down", req)
 
             filters = _filter_params(req)
 
@@ -730,7 +738,7 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 
             if not data.get("items"):
                 logger.warning("Hotel search finished with no items (searchId=%s)", sid)
-                return None
+                return _hotel_fail("none", req)
 
             total = int((data.get("pagination") or {}).get("total") or len(data["items"]))
             city_label = str((pick or {}).get("label") or req.destination)
@@ -849,7 +857,18 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
         return {"items": out, "total": total, "page": page, "note": note, "widened": widened, "filters_failed": bool(filters_failed)}
     except Exception as exc:
         logger.warning("Hotel search failed: %s: %r", type(exc).__name__, exc)
-        return None
+        return _hotel_fail("down", req)
+
+
+def _hotel_fail(why: str, req: "SearchRequest") -> Dict[str, Any]:
+    """No hotels to show, and the note that says why: the company server did not answer ("down"), or it answered with no
+    hotel for these dates ("none"; for a check-in today that is usually the supplier closing same-day bookings)."""
+    lang = req.lang or "en"
+    if why == "none":
+        key = "hotels_none_today" if req.start_date == _today_ist().isoformat() else "hotels_none"
+    else:
+        key = "hotels_unavailable"
+    return {"items": [], "total": 0, "page": 1, "note": cmem.fixed(key, lang), "widened": False, "failed": why}
 
 
 # ---------- routes: health & auth ----------
@@ -1215,12 +1234,14 @@ async def travel_search(req: SearchRequest, request: Request):
     live: Optional[Dict[str, Any]] = None
     if req.service == "hotels":
         live = await _akbar_hotels(req)
-        if live:
+        if live and live.get("items"):
             results = live["items"]
             total = live["total"]
             page = live["page"]
             live_note = live.get("note")
             mode = "LIVE"
+        elif live:
+            live_note = live.get("note")       # why there is nothing to show
     if not results and req.service != "hotels":
         results = _mock_results(req)
         for r in results:  # the details and payment pages show these
@@ -2038,6 +2059,13 @@ def _budget_step(trip: Optional[Dict[str, Any]], results: Optional[Dict[str, Any
     "shall I look a little higher?"): the next search, and the line that goes with it. None when there is nothing to step."""
     if not trip or trip.get("service") != "hotels" or not results or results.get("service") != "hotels":
         return None
+    today_none = {cmem.fixed("hotels_none_today", lg) for lg in ("en", "hinglish", "hi")}
+    if not results.get("items") and str(results.get("note") or "").strip() in today_none:
+        start, end = _parse_day(trip.get("start_date")), _parse_day(trip.get("end_date"))
+        if start and end and end > start:             # "kal se dekhun?" - "haan": the same stay, one day later
+            step = dict(trip)
+            step["start_date"], step["end_date"] = (start + timedelta(days=1)).isoformat(), (end + timedelta(days=1)).isoformat()
+            return step, "from_tomorrow"
     if not results.get("items") and not results.get("widened"):
         return dict(trip), "search_again"             # nothing came back (the supplier was busy): the same search once more
     if not results.get("widened"):
@@ -2448,6 +2476,9 @@ SYSTEM_PROMPT = (
     "14. NEAR ME / PINCODE: 'mere paas', 'near me', 'yahin aas-paas' or a 6-digit Indian pincode ('302017 me hotel') is a place, never a price or a guest count. "
     "The app works out the city and the exact point (see PLACE below when it is known): write a normal hotel block for that city and never ask which city. "
     "A 6-digit number is a pincode, not a budget.\n"
+    "15. An answer that does not fit the question (an area when you asked for the date, a budget when you asked for guests): TAKE it "
+    "(note the area or budget) and ask the missing thing again in the same short line, e.g. 'Theek hai, Jhotwara. Kis date se chahiye?'. "
+    "Never tell the visitor that what they wrote is not a date or is wrong when it is clearly something else useful.\n"
     "13. HOTEL FILTERS (optional, only when the visitor asks): add to the hotel block \"stars\":[3,4,5] for '3 star se upar' ([4] for '4 star', [3,4] for '3 ya 4 star'), "
     "\"free_cancel\":true for free cancellation / refundable, \"breakfast\":true for breakfast included, "
     "\"property\":\"GuestHouse|Resort|Hostel|Homestay|Apartment|Villa|Palace|Hotel\" for a kind of stay, "
