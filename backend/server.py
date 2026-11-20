@@ -2851,6 +2851,25 @@ try:  # quick grocery delivery (demo); optional like the rides
     app.include_router(_grocery.router)
 except Exception:
     logger.exception("grocery is switched off")
+try:  # the step-by-step hotel chatbot API (/api/v1/chatbot) - the shape the frontend team's Postman collection tests
+    try:
+        import step_bot as _step_bot
+    except ImportError:
+        from backend import step_bot as _step_bot
+
+    async def _step_details(search_id: str, hotel_id: str, nights: Optional[int]) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as cl:
+            return await _hotel_live.fetch_details(cl, _hotel_live._base(), search_id, hotel_id, nights)
+
+    _step_bot.setup(
+        destinations=_akbar_destinations, hotels=_akbar_hotels, SearchRequest=SearchRequest, resolve_area=_resolve_area,
+        find_dates=cmem._find_dates, today=_today_ist, filters_in_text=_filters_in_text, merge_filters=_merge_filters,
+        pincode_in=geo.pincode_in, place_from_pincode=lambda pin: geo.place_from_pincode(pin, _akbar_destinations, _resolve_area),
+        details=_step_details, rate_limit=_rate_limit, client_ip=_client_ip,
+    )
+    app.include_router(_step_bot.router)
+except Exception:
+    logger.exception("the step chatbot API is switched off")
 try:  # a natural spoken voice (Gemini speech); the website falls back to the browser's voice when this is off or busy
     try:
         import voice_tts as _voice_tts
