@@ -685,7 +685,8 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
 
         sid = ""
         data: Dict[str, Any] = {}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)) as c:
+        # the company dev server sometimes takes 30 s+ to start a search: 45 s before giving up, and one more try
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as c:
             for attempt in range(2):            # a hiccup of the company server: one more try before giving up
                 try:
                     r = await c.post(f"{HOTEL_API_BASE}/search", json=payload)
@@ -703,7 +704,8 @@ async def _akbar_hotels(req: SearchRequest) -> Optional[Dict[str, Any]]:
                     logger.warning("No searchId in response")
                 elif r is not None:
                     logger.warning("Hotel search start non-200: %s %s", r.status_code, r.text[:200])
-                await asyncio.sleep(2)
+                if attempt == 0:
+                    await asyncio.sleep(3)
             if not sid:
                 return _hotel_fail("down", req)
 

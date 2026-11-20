@@ -910,9 +910,9 @@ FIXED = {
         "hi": "इन तारीख़ों के लिए कोई होटल नहीं आया। दूसरी तारीख़ें या इलाक़ा आज़माएँ।",
     },
     "hotels_unavailable": {
-        "en": "Live hotels are not available right now. Please try again shortly.",
-        "hinglish": "Abhi live hotels nahi mil paa rahe. Thodi der baad dobara try karein.",
-        "hi": "अभी लाइव होटल नहीं मिल पा रहे। थोड़ी देर बाद फिर कोशिश करें।",
+        "en": "The hotel server did not answer just now. Shall I try again?",
+        "hinglish": "Hotel server ne abhi jawab nahi diya. Dobara try karun?",
+        "hi": "होटल सर्वर ने अभी जवाब नहीं दिया। फिर से कोशिश करूँ?",
     },
     "ask_city": {
         "en": "Which city should I look in? Please tell me the city name again.",
